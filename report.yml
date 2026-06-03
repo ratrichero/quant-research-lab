@@ -1,0 +1,16 @@
+name: Weekly & Monthly Report
+
+on:
+  schedule:
+    - cron: "0 23 * * 0"    # Weekly Sunday
+    - cron: "0 23 1 * *"    # Monthly first day
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Weekly Report
+        run: curl -X POST https://ctv-lab-469024357956.asia-southeast1.run.app/weekly-report
+
+      - name: Monthly Report
+        run: curl -X POST https://ctv-lab-469024357956.asia-southeast1.run.app/monthly-report
