@@ -356,7 +356,7 @@
                 {{ row.regime }}
               </span>
             </td>
-            <td class="center" style="color:#ffb74d;">{{ row.score }}</td>
+            <td class="center" style="color:#ffb74d;">{{ "%.2f"|format(row.score) }}</td>
             <td class="center" style="color:#777;font-size:0.78rem;">
               {{ (row.created_at + timedelta(hours=7)).strftime('%Y-%m-%d %H:%M') if row.created_at else '-' }}
             </td>
