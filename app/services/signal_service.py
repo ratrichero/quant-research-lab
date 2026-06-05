@@ -529,6 +529,7 @@ def run_market_scan():
             # ✅ ML FILTER
             # ======================================
 
+            # mới sửa lại lỗi truyền nhầm score
             features = build_features_from_row(last, components, direction)
             prob = predict_prob(features)
 
