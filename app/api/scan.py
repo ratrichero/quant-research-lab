@@ -1,9 +1,38 @@
 from fastapi import APIRouter
-from app.services.signal_service import run_market_scan
+from app.services.signal_service import (
+    run_market_scan_single_tf,
+    run_market_scan_multi_tf
+)
+from app.services.config_service import get_runtime_config
 
 router = APIRouter()
 
+
+# ✅ Manual Docs → single timeframe
 @router.post("/scan")
 async def scan():
-    result = run_market_scan()
-    return {"status": "ok", "signals_sent": len(result), "signals": result}
+
+    runtime_cfg = get_runtime_config()
+    timeframe = runtime_cfg["TIMEFRAME"]
+
+    result = run_market_scan_single_tf(timeframe)
+
+    return {
+        "status": "ok",
+        "mode": "single_tf",
+        "timeframe": timeframe,
+        "result": result
+    }
+
+
+# ✅ Cloud Scheduler → multi timeframe
+@router.post("/scan-multi")
+async def scan_multi():
+
+    result = run_market_scan_multi_tf()
+
+    return {
+        "status": "ok",
+        "mode": "multi_tf",
+        "result": result
+    }

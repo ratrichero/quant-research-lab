@@ -69,6 +69,29 @@ async def global_exception_handler(request: Request, exc: Exception):
 
 # ==================== Monitor Open Trades / Chay trên GCP ko được đâu nhé, dung CronJob ====================
 
+""" ====================AUTO Scan Scheduler ====================***
+
+import asyncio
+from datetime import datetime
+from app.services.signal_service import run_market_scan_multi_tf
+
+
+def is_scan_minute(now: datetime):
+    return now.minute in [1, 16, 31, 46]
+
+@app.on_event("startup")
+async def start_local_scheduler():
+
+    async def loop():
+        while True:
+            run_market_scan_multi_tf()
+            await asyncio.sleep(60)
+
+    asyncio.create_task(loop())
+
+"""
+
+""" ====================BACKGROUND TAKS MONITOR OPENTRADE ====================***
 import asyncio
 from app.services.trade_monitor import monitor_open_trades
 
@@ -127,3 +150,4 @@ async def start_local_scheduler():
             await asyncio.sleep(10)  # check mỗi 10 giây
 
     asyncio.create_task(scan_loop())
+    """
