@@ -25,14 +25,26 @@ async def scan():
     }
 
 
-# ✅ Cloud Scheduler → multi timeframe
+"""# ✅ Cloud Scheduler → multi timeframe
 import threading
 
 @router.post("/scan-multi")
 async def scan_multi():
 
+    
     threading.Thread(
         target=run_market_scan_multi_tf
     ).start()
 
-    return {"status": "started"}
+    return {"status": "started""""
+
+@router.post("/scan-multi")
+async def scan_multi():
+
+    result = run_market_scan_single_tf()
+    
+    return {
+        "status": "ok",
+        "mode": "multi_tf",
+        "result": result
+    }
