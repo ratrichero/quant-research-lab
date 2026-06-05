@@ -89,7 +89,7 @@ def color_score(score):
 
 
 # ============================================================
-#  HELPER
+# TIMEFRAME HELPER
 # ============================================================
 
 def get_higher_timeframe(tf: str) -> str:
@@ -99,18 +99,6 @@ def get_higher_timeframe(tf: str) -> str:
         "4h":  "1d"
     }
     return mapping.get(tf)
-
-def safe(v):
-    import numpy as np
-    import pandas as pd
-
-    if isinstance(v, (np.floating, np.integer)):
-        return float(v)
-
-    if isinstance(v, pd.Timestamp):
-        return v.to_pydatetime()
-
-    return v
 
 
 # ============================================================
@@ -348,7 +336,7 @@ def run_market_scan_multi_tf():
         if now.minute in [1, 16, 31, 46]:
             scan_timeframe(db, "15m", runtime_cfg)
 
-        if now.minute == 6:
+        if now.minute == 5:
             scan_timeframe(db, "1h", runtime_cfg)
 
         if now.minute == 10 and now.hour % 4 == 0:
@@ -387,16 +375,14 @@ def scan_timeframe(db, timeframe, runtime_cfg):
     mtf_enabled=runtime_cfg["MTF_ENABLED"]
     )
     db.add(config)
-    db.commit()
-    db.refresh(config)
+    db.flush()  # lấy config.id
 
     scan_run = ScanRun(
-        timeframe=timeframe,
-        config_id=config.id
+    timeframe=timeframe,
+    config_id=config.id
     )
     db.add(scan_run)
-    db.commit()   # ✅ FIX CHÍNH Ở ĐÂY
-    db.refresh(scan_run)
+    db.flush()  # lấy scan_run.id
 
     symbols         = get_top_symbols(runtime_cfg["TOP_LIMIT"])
     SCORE_THRESHOLD = runtime_cfg["SCORE_THRESHOLD"]
@@ -429,13 +415,13 @@ def scan_timeframe(db, timeframe, runtime_cfg):
         batch = symbols[i:i + BATCH_SIZE]
 
         for symbol in batch:
-
             scan_stats["total_symbols"] += 1
 
             try:
-                # ================= DATA =================
-                df = get_klines_closed(symbol, interval=timeframe)
 
+                # ── Primary TF ──────────────────────────────
+                df = get_klines_closed(symbol, interval=timeframe)
+                #debug_candle_status(df, timeframe, symbol)
                 if df is None or df.empty or len(df) < 3:
                     continue
 
@@ -446,6 +432,8 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     atr_period=14,
                     volume_ma_period=20
                 )
+
+                # ✅ FIX QUAN TRỌNG
                 last = df.iloc[-1]
                 prev = df.iloc[-2]
 
@@ -455,23 +443,33 @@ def scan_timeframe(db, timeframe, runtime_cfg):
 
                 scan_stats["pattern_detected"] += 1
 
-                # ================= MTF =================
+                # ── HTF cache (lazy: chỉ fetch khi có pattern) ──
+                # ← CHANGED: fetch sau pattern check + add_indicators + error handle
                 htf_df = None
+
                 if higher_tf:
                     if symbol not in htf_cache:
-                        raw_htf = get_klines_closed(symbol, interval=higher_tf, limit=200)
-                        if raw_htf is not None and not raw_htf.empty and len(raw_htf) >= 50:
-                            htf_cache[symbol] = add_indicators_advanced(raw_htf)
-                        else:
+                        try:
+                            raw_htf = get_klines_closed(symbol, interval=higher_tf, limit=200)
+
+                            if raw_htf is not None and not raw_htf.empty and len(raw_htf) >= 50:
+                                htf_cache[symbol] = add_indicators_advanced(raw_htf)
+                            else:
+                                htf_cache[symbol] = None
+
+                        except Exception as e:
+                            print(f"⚠️ HTF fetch failed {symbol}/{higher_tf}: {e}")
                             htf_cache[symbol] = None
+
                     htf_df = htf_cache[symbol]
 
-                # ================= SCORE =================
+                # ── Score ────────────────────────────────────
                 score, direction, components = calculate_score(
-                    df, pattern, runtime_cfg, symbol, timeframe, htf_df=htf_df
+                    df, pattern, runtime_cfg, symbol, timeframe,
+                    htf_df=htf_df  # ← CHANGED: truyền vào thay vì fetch trong score
                 )
 
-                # ================= REGIME =================
+                # ── Regime ───────────────────────────────────
                 regime = detect_regime_advanced(
                     df,
                     method="hybrid",
@@ -479,30 +477,6 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     threshold=0.002
                 )
 
-                # ================= CREATE DEBUG (DB) =================
-                debug = ScanDebug(
-                    scan_id=scan_run.id,
-                    symbol=symbol,
-                    pattern=pattern,
-                    direction=direction,
-                    trend_score=float(components.get("trend_score", 0)),
-                    momentum_score=float(components.get("momentum_score", 0)),
-                    volume_score=float(components.get("volume_score", 0)),
-                    pattern_score=float(components.get("pattern_score", 0)),
-                    mtf_score=float(components.get("mtf_score", 0)),
-                    penalty=float(components.get("strict_penalty", 0)),
-                    total_score=float(score),
-                    passed_score=score >= SCORE_THRESHOLD,
-                    block_reason=None,
-                    regime=regime,
-                    candle_time=last["time"].to_pydatetime(),
-                    ml_prob=None
-                )
-
-                db.add(debug)
-                db.flush()
-
-                # ================= DEBUG LOG =================
                 debug_rows.append({
                     "symbol": symbol,
                     "pattern": pattern,
@@ -518,25 +492,24 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     "block_reason": None,
                     "candle_time": last["time"].to_pydatetime(),
                     "ml_prob": None,
-                    "regime": regime,
+                    "regime": None,
                     "debug_id": None
                 })
 
-                # ================= FILTER =================
                 if score < SCORE_THRESHOLD:
-                    debug.block_reason = "score_threshold"
                     debug_rows[-1]["block_reason"] = "score_threshold"
                     scan_stats["score_reject"] += 1
                     continue
 
+                
+                debug_rows[-1]["regime"] = regime
+
                 if regime == "BULL" and direction != "LONG":
-                    debug.block_reason = "regime_mismatch"
                     debug_rows[-1]["block_reason"] = "regime_mismatch"
                     scan_stats["regime_blocked"] += 1
                     continue
 
                 if regime == "BEAR" and direction != "SHORT":
-                    debug.block_reason = "regime_mismatch"
                     debug_rows[-1]["block_reason"] = "regime_mismatch"
                     scan_stats["regime_blocked"] += 1
                     continue
@@ -550,56 +523,52 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                 ).first()
 
                 if existing_open:
-                    debug.block_reason = "open_exist"
                     debug_rows[-1]["block_reason"] = "open_signal"
                     scan_stats["open_signal_blocked"] += 1
                     continue
 
-                # Khong biet co y nghia gi khi xuat hien o day, tam comment
-
-                #if df is None or len(df) < 2:
-                #    continue
-                #last = df.iloc[-1]
-
-                # ================= DUPLICATE =================
+                # ── Duplicate + Cooldown ─────────────────────
+                if df is None or len(df) < 2:
+                    continue
+                last = df.iloc[-1]
+                
                 candle_time = last["time"].to_pydatetime()
 
                 if is_duplicate(db, symbol, timeframe, candle_time):
-                    debug.block_reason = "duplicate"
                     debug_rows[-1]["block_reason"] = "duplicate"
                     scan_stats["duplicate_blocked"] += 1
                     continue
 
                 if in_cooldown(db, symbol, timeframe, hours=runtime_cfg["COOLDOWN_HOURS"]):
-                    debug.block_reason = "cooldown"
                     debug_rows[-1]["block_reason"] = "cooldown"
                     scan_stats["cooldown_blocked"] += 1
                     continue
 
-                # ================= ML =================
+                # ── ML filter ────────────────────────────────
                 features = build_features_from_row(last, components, direction)
                 prob = predict_prob(features)
-
-                debug.ml_prob = float(prob) if prob is not None else None
+                
+                # ✅ GÁN ml_prob vào debug row
+                debug_rows[-1]["ml_prob"] = float(prob) if prob is not None else None
 
                 if prob is not None and prob < runtime_cfg["AI_THRESHOLD"]:
-                    debug.block_reason = "ml_threshold"
                     debug_rows[-1]["block_reason"] = "ml_threshold"
                     scan_stats["ml_blocked"] += 1
                     continue
 
-                # ================= CREATE SIGNAL =================
-                entry = float(last["close"])
+                # ── Risk (ATR guard) ─────────────────────────
+                entry   = float(last["close"])
                 atr_val = float(last["atr"])
 
+                # ← CHANGED: guard ATR = 0
                 if atr_val <= 0:
+                    print(f"⚠️ ATR invalid for {symbol}, skip")
                     continue
 
                 risk_cfg = runtime_cfg.get("RISK_CONFIG", {}).get(
                     timeframe,
                     {"sl_mult": 1.5, "tp_mult": 3}
                 )
-
                 sl_mult = risk_cfg["sl_mult"]
                 tp_mult = risk_cfg["tp_mult"]
 
@@ -610,14 +579,13 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     sl = entry + atr_val * sl_mult
                     tp = entry - atr_val * tp_mult
 
-                # ================= SNAPSHOT =================
+                # ── Entry snapshot ───────────────────────────
                 rr = None
                 if entry != sl:
                     rr = abs((tp - entry) / (entry - sl))
 
-                ema200 = last.get("ema200")
+                ema200      = last.get("ema200")
                 close_price = last.get("close")
-
                 ema_distance = None
                 if ema200 and close_price and ema200 != 0:
                     ema_distance = (close_price - ema200) / ema200
@@ -626,63 +594,61 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                 if last.get("atr") and close_price and close_price != 0:
                     atr_ratio = last["atr"] / close_price
 
-                # ================= SAVE SIGNAL =================
+                # ── Save Signal ──────────────────────────────
                 signal = Signal(
-                    symbol=symbol,
-                    timeframe=timeframe,
-                    pattern=pattern,
-                    direction=direction,
-                    score=safe(score),
-                    entry_price=safe(entry),
-                    stop_loss=safe(sl),
-                    take_profit=safe(tp),
-                    rsi=safe(last.get("rsi")),
-                    volume_ratio=safe(
-                        last["volume"] / last["vol_ma"]
-                        if last.get("vol_ma") and last["vol_ma"] > 0 else None
-                    ),
-                    atr_ratio=safe(atr_ratio),
-                    regime=regime,
-                    candle_time=last["time"].to_pydatetime()
+                    symbol      = symbol,
+                    timeframe   = timeframe,
+                    pattern     = pattern,
+                    direction   = direction,
+                    score       = float(score),
+                    entry_price = entry,
+                    stop_loss   = sl,
+                    take_profit = tp,
+                    rsi         = float(last["rsi"]) if last.get("rsi") is not None else None,
+                    volume_ratio = float(last["volume"] / last["vol_ma"])
+                        if last.get("vol_ma") and last["vol_ma"] > 0 else None,
+                    atr_ratio   = atr_ratio,
+                    regime      = regime,
+                    candle_time = candle_time
                 )
-
                 db.add(signal)
                 db.flush()
+                
+                debug_id = debug_rows[-1]["debug_id"]
 
-                # ✅ LINK DEBUG → SIGNAL
-                debug.signal_id = signal.id
+                if debug_id:
+                    db.query(ScanDebug).filter(
+                        ScanDebug.id == debug_id
+                    ).update({
+                        "signal_id": signal.id
+                    })
 
-                # ================= SAVE FEATURE =================
                 feature = SignalFeature(
-                    signal_id=signal.id,
-                    rsi=safe(last.get("rsi")),
-                    volume_ratio=safe(
-                        last["volume"] / last["vol_ma"]
-                        if last.get("vol_ma") and last["vol_ma"] > 0 else None
-                    ),
-                    atr_ratio=safe(atr_ratio),
-                    regime=regime,
-                    trend_score=safe(components.get("trend_score")),
-                    momentum_score=safe(components.get("momentum_score")),
-                    volume_score=safe(components.get("volume_score")),
-                    ema_distance=safe(ema_distance),
-                    pattern_score=safe(components.get("pattern_score")),
-                    mtf_score=safe(components.get("mtf_score")),
-                    total_score=safe(score),
-                    strict_penalty=safe(components.get("strict_penalty")),
-                    rr=safe(rr)
+                    signal_id      = signal.id,
+                    rsi            = float(last["rsi"]) if last.get("rsi") is not None else None,
+                    volume_ratio   = float(last["volume"] / last["vol_ma"])
+                        if last.get("vol_ma") and last["vol_ma"] > 0 else None,
+                    atr_ratio      = atr_ratio,
+                    regime         = regime,
+                    trend_score    = components.get("trend_score"),
+                    momentum_score = components.get("momentum_score"),
+                    volume_score   = components.get("volume_score"),
+                    ema_distance   = ema_distance,
+                    pattern_score  = components.get("pattern_score"),
+                    mtf_score      = components.get("mtf_score"),
+                    total_score    = score,
+                    strict_penalty = components.get("strict_penalty"),
+                    rr             = rr
                 )
-
                 db.add(feature)
-
-                # ✅ COMMIT 1 LẦN
                 db.commit()
 
                 scan_stats["sent"] += 1
 
-                # ================= TELEGRAM =================
-                prob_text = f"{prob:.2f}" if prob is not None else "N/A"
-                rr_text = f"{rr:.2f}" if rr is not None else "N/A"
+                # ── Telegram ─────────────────────────────────
+                # ← CHANGED: rr_text tránh crash khi rr=None
+                prob_text  = f"{prob:.2f}" if prob is not None else "N/A"
+                rr_text    = f"{rr:.2f}"   if rr   is not None else "N/A"
                 local_time = to_local_time(candle_time)
 
                 message = (
@@ -696,17 +662,17 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     f"<b>Entry:</b> {entry:.4f}\n"
                     f"<b>Stop Loss:</b> {sl:.4f}\n"
                     f"<b>Take Profit:</b> {tp:.4f}\n"
-                    f"<b>RR:</b> {rr_text}\n\n"
+                    f"<b>RR:</b> {rr_text}\n\n"      # ← CHANGED
                     f"<b>Candle Time (GMT+7):</b> {local_time}"
                 )
 
                 send_telegram(message)
-
                 print(f"✅ SENT: {symbol} | {pattern} | {direction} | Score={score}")
 
             except Exception as e:
                 db.rollback()
                 print(f"❌ Error {symbol}: {type(e).__name__} - {e}")
+                traceback.print_exc()
 
         time.sleep(BATCH_SLEEP)
 
@@ -830,5 +796,30 @@ def scan_timeframe(db, timeframe, runtime_cfg):
         print(f"\n⚠️  WARNING: ML block {scan_stats['ml_blocked']}/{scan_stats['pattern_detected']} patterns")
         print("   → Model filter quá aggressive, kiểm tra AI_THRESHOLD")
 
-   
+    for row in debug_rows:
+        
+        row = sanitize_row(row)   # ✅ THÊM DÒNG NÀY
+        debug = ScanDebug(
+            scan_id=scan_run.id,
+            symbol=row["symbol"],
+            pattern=row["pattern"],
+            direction=row["direction"],
+            trend_score=row["trend"],
+            momentum_score=row["momentum"],
+            volume_score=row["volume"],
+            pattern_score=row["pattern_score"],
+            mtf_score=row["mtf"],
+            penalty=row["penalty"],
+            total_score=row["total_score"],
+            passed_score=row["passed_score"],
+            block_reason=row["block_reason"],
+            regime=row["regime"],
+            candle_time=row["candle_time"],
+            ml_prob=row["ml_prob"]
+        )
+
+        db.add(debug)
+
+    db.commit()
+
     return scan_stats

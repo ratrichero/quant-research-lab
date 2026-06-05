@@ -151,6 +151,7 @@ class ScanDebug(Base):
     block_reason = Column(String)
     regime = Column(String)
     ml_prob = Column(Float)
+    signal_id = Column(BigInteger, ForeignKey("signals.id"), nullable=True)
     candle_time = Column(DateTime)
 
     created_at = Column(DateTime, default=datetime.utcnow)

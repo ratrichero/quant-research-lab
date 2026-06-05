@@ -36,13 +36,13 @@ async def scan_multi():
         target=run_market_scan_multi_tf
     ).start()
 
-    return {"status": "started""""
+    return {"status": "started"""
 
 @router.post("/scan-multi")
 async def scan_multi():
 
-    result = run_market_scan_single_tf()
-    
+    result = run_market_scan_multi_tf()
+
     return {
         "status": "ok",
         "mode": "multi_tf",
