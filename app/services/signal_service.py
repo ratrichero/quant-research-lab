@@ -14,6 +14,7 @@ from app.db.models import Signal
 from app.ml.predict import predict_prob
 from app.ml.features import build_features_from_row
 from app.services.llm_router import generate_explanation
+from app.db.models import SignalFeature
 
 
 # ============================================================
@@ -341,12 +342,13 @@ def scan_timeframe(db, timeframe, runtime_cfg):
         "duplicate_blocked": 0,
         "cooldown_blocked": 0,
         "ml_blocked": 0,
+        "open_signal_blocked":0,
         "sent": 0
     }
 
     debug_rows = []
 
-    print(f"\n🔄 ===== SCAN {timeframe} =====")
+    print(f"\n🔄 ===== SCAN {timeframe} | Time: {get_hanoi_time()} =====")
 
     # ✅ HTF cache
     htf_cache = {}
@@ -427,7 +429,8 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                 ).first()
 
                 if existing_open:
-                    scan_stats["cooldown_blocked"] += 1
+                    scan_stats["open_signal_blocked"] += 1
+                    debug_rows[-1]["block_reason"] = "open_signal"
                     continue
 
                 last = df.iloc[-2]
@@ -435,10 +438,12 @@ def scan_timeframe(db, timeframe, runtime_cfg):
 
                 if is_duplicate(db, symbol, timeframe, candle_time):
                     scan_stats["duplicate_blocked"] += 1
+                    debug_rows[-1]["block_reason"] = "duplicate"
                     continue
 
                 if in_cooldown(db, symbol, timeframe, hours=runtime_cfg["COOLDOWN_HOURS"]):
                     scan_stats["cooldown_blocked"] += 1
+                    debug_rows[-1]["block_reason"] = "cooldown"
                     continue
 
                 # ================= ML =================
@@ -505,7 +510,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                 db.add(signal)
                 db.flush()
 
-                from app.db.models import SignalFeature
+                
                 feature = SignalFeature(
                     signal_id=signal.id,
                     rsi=float(last["rsi"]) if last.get("rsi") is not None else None,
@@ -562,43 +567,68 @@ def scan_timeframe(db, timeframe, runtime_cfg):
         time.sleep(BATCH_SLEEP)
     db.close()
 
-    # ================= DEBUG =================
+    # ── Header
     print("\n===== DEBUG DASHBOARD =====")
+    print(
+        f"{'Symbol':<12}"
+        f"{'Pattern':<22}"
+        f"{'T':>3}"
+        f"{'M':>4}"
+        f"{'V':>5}"
+        f"{'P':>6}"
+        f"{'MTF':>5}"
+        f"{'PEN':>5}"
+        f"{'Score':>7}"
+        f"  {'Bar':<12}"
+        f"  Block Reason"
+    )
+    print("─" * 105)
+
+    # ── Rows
+    BLOCK_EMOJI = {
+        "score_threshold":  "📉 score_low",
+        "regime_mismatch":  "🌊 regime",
+        "open_signal":      "🔒 open_signal",
+        "duplicate":        "♻️  duplicate",
+        "cooldown":         "⏳ cooldown",
+        "ml_threshold":     "🤖 ml_prob",
+        None:               "✅ PASSED",
+    }
 
     for row in sorted(debug_rows, key=lambda x: x.get("total_score") or 0, reverse=True):
 
-        total = row.get("total_score")
-        bar = score_bar(total)
+        total        = row.get("total_score")
+        bar          = score_bar(total)
+        reason_raw   = row.get("block_reason")
+        reason_label = BLOCK_EMOJI.get(reason_raw, str(reason_raw))
 
         print(
-            f"{row['symbol']:<10} "
-            f"{row.get('pattern',''):<18} "
-            f"T={row.get('trend')} "
-            f"M={row.get('momentum')} "
-            f"V={row.get('volume')} "
-            f"P={row.get('pattern_score')} "
-            f"MTF={row.get('mtf')} "
-            f"PEN={row.get('penalty')} | "
-            f"{color_score(total)} {bar} | "
-	        f"BLOCK={row.get('block_reason')}"
+            f"{str(row.get('symbol',  '')):<12}"
+            f"{str(row.get('pattern', '')):<22}"
+            f"{fmt(row.get('trend'),          3, decimals=0)}"   # int → no decimal
+            f"{fmt(row.get('momentum'),       4, decimals=1)}"   # 0 → 2.0
+            f"{fmt(row.get('volume'),         5, decimals=2)}"   # 2 decimal
+            f"{fmt(row.get('pattern_score'),  6, decimals=2)}"   # 2 decimal
+            f"{fmt(row.get('mtf'),            5, decimals=2)}"   # 2 decimal
+            f"{fmt(row.get('penalty'),        5, decimals=1)}"   # 1 decimal
+            f"{fmt(total,                     7, decimals=2)}"   # score
+            f"  {bar:<12}"
+            f"  {reason_label}"
         )
 
-    valid_scores = [r["total_score"] for r in debug_rows if r.get("total_score")]
+    # Trích xuất list điểm từ debug_rows
+    valid_scores = [row.get("total_score") for row in debug_rows if row.get("total_score") is not None]
 
     if valid_scores:
-        print(f"\n📊 SCORE DISTRIBUTION ({timeframe})")
-        print(f"Min: {min(valid_scores):.2f} | "
-              f"Max: {max(valid_scores):.2f} | "
-              f"Avg: {sum(valid_scores)/len(valid_scores):.2f}")
-
+        print("\n📊 SCORE DISTRIBUTION ANALYSIS:")
+        print(f"Total Signals Evaluated: {len(valid_scores)}")
+        print(f"Min: {min(valid_scores):.2f} | Max: {max(valid_scores):.2f} | Avg: {sum(valid_scores)/len(valid_scores):.2f}")
         print("\n🎯 Gợi ý đặt SCORE_THRESHOLD trong DB:")
-
         for p in [50, 70, 80, 90, 95]:
             threshold_val = np.percentile(valid_scores, p)
             print(f"- Nếu muốn lấy Top {100-p}% tín hiệu đẹp nhất -> Đặt SCORE_THRESHOLD = {threshold_val:.2f}")
-
     else:
-            print("\n⚠️ Không có signal nào được tính điểm.")
+        print("\n⚠️ Không có signal nào được tính điểm.")
 
     # ======================================
         # 📊 In các chỉ số ra để debug
@@ -610,10 +640,67 @@ def scan_timeframe(db, timeframe, runtime_cfg):
             
     print("=================================\n")
 
-    print("\n=== SCAN SUMMARY ===")
-    for k, v in scan_stats.items():
-            print(f"{k}: {v}")
+    # ================= SCAN SUMMARY =================
+    total = scan_stats["total_symbols"]
+    passed = scan_stats["sent"]
 
-    return scan_stats
+    # Tính tỷ lệ filter từng loại
+    def pct(n, total):
+        return f"{n/total*100:.1f}%" if total > 0 else "0%"
+
+    print("\n" + "=" * 45)
+    print(f"📊 SCAN SUMMARY [{timeframe}]")
+    print("=" * 45)
+    print(f"  🔍 Total symbols scanned : {total}")
+    print(f"  🕯️  Pattern detected       : {scan_stats['pattern_detected']} ({pct(scan_stats['pattern_detected'], total)})")
+    print("-" * 45)
+    print("  Filtered out:")
+    print(f"  📉 Score too low          : {scan_stats['score_reject']}        ({pct(scan_stats['score_reject'], total)})")
+    print(f"  🌊 Regime mismatch        : {scan_stats['regime_blocked']}        ({pct(scan_stats['regime_blocked'], total)})")
+    print(f"  🔒 Has open signal        : {scan_stats['open_signal_blocked']}        ({pct(scan_stats['open_signal_blocked'], total)})")  # ← NEW
+    print(f"  ♻️  Duplicate candle       : {scan_stats['duplicate_blocked']}        ({pct(scan_stats['duplicate_blocked'], total)})")
+    print(f"  ⏳ Cooldown active        : {scan_stats['cooldown_blocked']}        ({pct(scan_stats['cooldown_blocked'], total)})")
+    print(f"  🤖 ML prob too low        : {scan_stats['ml_blocked']}        ({pct(scan_stats['ml_blocked'], total)})")
+    print("-" * 45)
+    print(f"  ✅ Signal sent            : {passed}        ({pct(passed, total)})")
+    print("=" * 45)
+
+    # ⚠️ Cảnh báo bất thường
+    if scan_stats["open_signal_blocked"] > 20:
+        print(f"\n⚠️  WARNING: {scan_stats['open_signal_blocked']} symbols bị block vì open signal")
+        print("   → Xem xét giảm COOLDOWN_HOURS hoặc tăng tốc close lệnh cũ")
+
+    if scan_stats["cooldown_blocked"] > scan_stats["sent"] * 3:
+        print(f"\n⚠️  WARNING: Cooldown block ({scan_stats['cooldown_blocked']}) cao hơn sent ({scan_stats['sent']}) x3")
+        print("   → Xem xét giảm COOLDOWN_HOURS")
+
+    if scan_stats["ml_blocked"] > scan_stats["pattern_detected"] * 0.5:
+        print(f"\n⚠️  WARNING: ML block {scan_stats['ml_blocked']}/{scan_stats['pattern_detected']} patterns")
+        print("   → Model đang filter quá aggressive, kiểm tra AI_THRESHOLD")
 
 
+# ── Helper format cell gọn
+def fmt(val, width, decimals=2):
+    """
+    Format một giá trị thành string cố định width.
+    - None / ""  → dấu '-'
+    - int        → không decimal
+    - float      → làm tròn `decimals` chữ số
+    """
+    if val is None or val == "":
+        return f"{'─':>{width}}"
+    try:
+        f = float(val)
+        if f == int(f) and decimals == 0:
+            s = str(int(f))
+        else:
+            s = f"{f:.{decimals}f}"
+    except (TypeError, ValueError):
+        s = str(val)
+    # Cắt nếu vẫn dài hơn width (tránh lệch)
+    if len(s) > width:
+        s = s[:width]
+    return f"{s:>{width}}"
+
+def get_hanoi_time():
+    return datetime.now(timezone(timedelta(hours=7))).strftime("%Y-%m-%d %H:%M:%S")
