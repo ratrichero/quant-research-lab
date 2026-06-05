@@ -145,4 +145,69 @@ def get_klines(symbol, limit=200, interval=None, start_time=None, end_time=None)
     df["volume"] = df["volume"].astype(float)
     df["time"] = pd.to_datetime(df["time"], unit="ms")
 
+    df = df.sort_values("time").reset_index(drop=True)
     return df
+
+def get_binance_server_time():
+    url = f"{BINANCE_BASE}/fapi/v1/time"
+    r = requests.get(url, timeout=5).json()
+    
+    return pd.to_datetime(r["serverTime"], unit="ms")
+
+def get_candle_duration(interval: str):
+    from datetime import timedelta
+
+    mapping = {
+        "15m": timedelta(minutes=15),
+        "1h": timedelta(hours=1),
+        "4h": timedelta(hours=4),
+        "1d": timedelta(days=1)
+    }
+
+    return mapping[interval]
+
+def get_klines_closed(symbol, limit=300, interval=None, start_time=None, end_time=None):
+
+    df = get_klines(
+        symbol=symbol,
+        limit=limit,
+        interval=interval,
+        start_time=start_time,
+        end_time=end_time
+    )
+
+    if df.empty:
+        return df
+
+    server_now = get_binance_server_time()
+    duration = get_candle_duration(interval)
+
+    # ✅ chỉ giữ candle đã đóng
+    df = df[df["time"] + duration <= server_now]
+
+    return df
+
+def debug_candle_status(df, interval, symbol=""):
+
+    if df is None or df.empty:
+        print(f"[DEBUG] {symbol} DF EMPTY")
+        return
+
+    server_now = get_binance_server_time()
+    duration = get_candle_duration(interval)
+
+    last = df.iloc[-1]
+
+    open_time = last["time"]
+    close_time = open_time + duration
+
+    is_closed = close_time <= server_now
+
+    print("\n========== CANDLE DEBUG ==========")
+    print(f"Symbol: {symbol}")
+    print(f"Interval: {interval}")
+    print(f"Server time: {server_now}")
+    print(f"Last candle open:  {open_time}")
+    print(f"Last candle close: {close_time}")
+    print(f"Is closed: {is_closed}")
+    print("==================================\n")

@@ -3,7 +3,7 @@ import numpy as np
 from datetime import datetime, timezone, timedelta
 import time
 
-from app.services.binance_service import get_top_symbols, get_klines
+from app.services.binance_service import get_top_symbols, get_klines,get_klines_closed
 from app.services.indicator_service import add_indicators, add_indicators_advanced, detect_regime, detect_regime_advanced, get_market_state
 from app.services.pattern_service import detect_pattern
 from app.services.telegram_service import send_telegram
@@ -14,6 +14,7 @@ from app.db.models import Signal, SignalFeature  # ← CHANGED: gộp import
 from app.ml.predict import predict_prob
 from app.ml.features import build_features_from_row
 from app.services.llm_router import generate_explanation
+
 
 
 # ============================================================
@@ -91,8 +92,8 @@ def get_higher_timeframe(tf: str) -> str:
 
 def calculate_score(df, pattern, cfg, symbol, timeframe, htf_df=None):  # ← CHANGED: thêm htf_df
 
-    last = df.iloc[-2]
-    prev = df.iloc[-3]
+    last = df.iloc[-1]
+    prev = df.iloc[-2]
 
     state = get_market_state(df)
 
@@ -370,7 +371,8 @@ def scan_timeframe(db, timeframe, runtime_cfg):
             try:
 
                 # ── Primary TF ──────────────────────────────
-                df = get_klines(symbol, interval=timeframe)
+                df = get_klines_closed(symbol, interval=timeframe)
+                #debug_candle_status(df, timeframe, symbol)
                 if df.empty or len(df) < 200:
                     continue
 
@@ -391,17 +393,21 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                 # ── HTF cache (lazy: chỉ fetch khi có pattern) ──
                 # ← CHANGED: fetch sau pattern check + add_indicators + error handle
                 htf_df = None
+
                 if higher_tf:
                     if symbol not in htf_cache:
                         try:
-                            raw_htf = get_klines(symbol, interval=higher_tf, limit=200)
+                            raw_htf = get_klines_closed(symbol, interval=higher_tf, limit=200)
+
                             if not raw_htf.empty and len(raw_htf) >= 50:
                                 htf_cache[symbol] = add_indicators_advanced(raw_htf)
                             else:
-                                htf_cache[symbol] = None  # cache None tránh retry
+                                htf_cache[symbol] = None
+
                         except Exception as e:
                             print(f"⚠️ HTF fetch failed {symbol}/{higher_tf}: {e}")
                             htf_cache[symbol] = None
+
                     htf_df = htf_cache[symbol]
 
                 # ── Score ────────────────────────────────────
@@ -647,60 +653,20 @@ def scan_timeframe(db, timeframe, runtime_cfg):
 
     # ============================================================
     # SCORE DISTRIBUTION
-    # ← CHANGED: tách 3 nhóm rõ ràng
+    # 📊 PHÂN TÍCH PHÂN PHỐI ĐIỂM (PERCENTILES)
     # ============================================================
 
-    all_scores = [
-        r["total_score"] for r in debug_rows
-        if r.get("total_score") is not None
-    ]
-    qualified_scores = [
-        r["total_score"] for r in debug_rows
-        if r.get("total_score") is not None
-        and r.get("block_reason") != "score_threshold"
-    ]
-    sent_scores = [
-        r["total_score"] for r in debug_rows
-        if r.get("block_reason") is None
-    ]
+    # Trích xuất list điểm từ debug_rows
+    valid_scores = [row.get("total_score") for row in debug_rows if row.get("total_score") is not None]
 
-    if all_scores:
-        print(f"\n📊 SCORE DISTRIBUTION ({timeframe})")
-        print(f"{'─'*55}")
-        for label, scores in [
-            ("🔵 All patterns",        all_scores),
-            ("🟡 Passed score filter", qualified_scores),
-            ("🟢 Actually sent",       sent_scores),
-        ]:
-            if scores:
-                arr = np.array(scores)
-                print(
-                    f"{label:<26} "
-                    f"n={len(scores):<5} "
-                    f"Min={arr.min():.2f}  "
-                    f"Max={arr.max():.2f}  "
-                    f"Avg={arr.mean():.2f}"
-                )
-            else:
-                print(f"{label:<26} n=0")
-        print(f"{'─'*55}")
-
-        # Threshold suggestion dựa trên qualified_scores
-        if qualified_scores:
-            arr = np.array(qualified_scores)
-            print(f"\n🎯 Gợi ý SCORE_THRESHOLD (pool: {len(qualified_scores)} signals vượt score filter):")
-            print(f"  {'Label':<12} {'Threshold':>10} {'Count above':>12} {'% above':>8}")
-            print(f"  {'─'*46}")
-            for p in [50, 70, 80, 90, 95]:
-                threshold_val = np.percentile(arr, p)
-                count_above   = int((arr >= threshold_val).sum())
-                pct_above     = count_above / len(arr) * 100
-                print(
-                    f"  {'Top '+str(100-p)+'%':<12}"
-                    f"{threshold_val:>10.2f}"
-                    f"{count_above:>12}"
-                    f"{pct_above:>7.1f}%"
-                )
+    if valid_scores:
+        print("\n📊 SCORE DISTRIBUTION ANALYSIS:")
+        print(f"Total Signals Evaluated: {len(valid_scores)}")
+        print(f"Min: {min(valid_scores):.2f} | Max: {max(valid_scores):.2f} | Avg: {sum(valid_scores)/len(valid_scores):.2f}")
+        print("\n🎯 Gợi ý đặt SCORE_THRESHOLD trong DB:")
+        for p in [50, 70, 80, 90, 95]:
+            threshold_val = np.percentile(valid_scores, p)
+            print(f"- Nếu muốn lấy Top {100-p}% tín hiệu đẹp nhất -> Đặt SCORE_THRESHOLD = {threshold_val:.2f}")
     else:
         print("\n⚠️ Không có signal nào được tính điểm.")
 
