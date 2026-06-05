@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8">
+  <title>Quant Control Panel</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body { margin: 0; font-family: Arial, sans-serif; background: #111; color: #fff; }
+    .container { padding: 20px; max-width: 1400px; margin: auto; }
+    .page-title { margin: 0 0 4px 0; font-size: 1.5rem; }
+    .page-sub { color: #555; margin: 0 0 20px 0; font-size: 0.85rem; }
+    .section { margin-top: 30px; }
+    .section-title {
+      margin-bottom: 12px; font-size: 1rem; color: #eee;
+      border-left: 3px solid #0066ff; padding-left: 10px;
+    }
+
+    /* ── Metrics ── */
+    .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+    .metric { background: #1e1e1e; padding: 14px 10px; border-radius: 8px; text-align: center; border: 1px solid #2a2a2a; }
+    .metric-label { color: #888; font-size: 0.72rem; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .metric-value { font-size: 1.3rem; font-weight: bold; }
+
+    /* ── Chart ── */
+    .chart-box { background: #1e1e1e; padding: 15px; border-radius: 8px; }
+    .chart-box.h300 { height: 300px; }
+    .chart-box.h260 { height: 260px; }
+
+    /* ── Tables ── */
+    .table-wrapper { overflow-x: auto; background: #1e1e1e; padding: 10px; border-radius: 8px; }
+    table { width: 100%; border-collapse: collapse; }
+    th {
+      padding: 10px 12px; background: #222; border-bottom: 1px solid #333;
+      text-align: center; color: #aaa; font-size: 0.8rem;
+      text-transform: uppercase; letter-spacing: 0.05em; white-space: nowrap;
+    }
+    td {
+      padding: 9px 12px; border-bottom: 1px solid #222;
+      color: #ccc; font-size: 0.85rem; vertical-align: middle; white-space: nowrap;
+    }
+    tr:nth-child(even) { background: #1a1a1a; }
+    td.center { text-align: center; }
+    td.left  { text-align: left; }
+
+    /* ── Badges ── */
+    .badge { padding: 2px 8px; border-radius: 4px; font-size: 0.78rem; font-weight: bold; display: inline-block; }
+    .badge-long  { background: rgba(76,175,80,0.2); color: #4caf50; border: 1px solid #4caf50; }
+    .badge-short { background: rgba(255,82,82,0.2); color: #ff5252; border: 1px solid #ff5252; }
+    .badge-win   { background: rgba(76,175,80,0.15); color: #66bb6a; border: 1px solid #388e3c; }
+    .badge-loss  { background: rgba(255,82,82,0.15); color: #ef9a9a; border: 1px solid #c62828; }
+    .badge-regime { padding: 3px 10px; border-radius: 4px; font-size: 0.78rem; font-weight: bold; display: inline-block; }
+    .badge-trending { background: rgba(100,181,246,0.15); color: #64b5f6; }
+    .badge-ranging  { background: rgba(255,183,77,0.15); color: #ffb74d; }
+    .badge-bearish  { background: rgba(255,82,82,0.15); color: #ff5252; }
+
+    /* ── Form / Controls ── */
+    input, select, textarea {
+      width: 100%; padding: 6px 8px;
+      background: #222; color: #fff;
+      border: 1px solid #444; border-radius: 6px;
+      font-family: Arial; font-size: 0.875rem;
+    }
+    textarea { resize: vertical; }
+    button {
+      padding: 10px 20px; background: #0066ff; color: white;
+      border: none; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 0.9rem;
+    }
+    button:hover { background: #0052cc; }
+
+    /* ── Alert ── */
+    .alert { background: #ff5252; padding: 12px 16px; border-radius: 6px; margin-bottom: 16px; font-weight: bold; }
+
+    /* ── AI Answer ── */
+    #ai-answer {
+      margin-top: 12px; white-space: pre-wrap;
+      background: #1e1e1e; padding: 14px; border-radius: 8px;
+      color: #ccc; line-height: 1.7; font-size: 0.9rem; border: 1px solid #2a2a2a;
+    }
+
+    /* ── Open table animation ── */
+    #open-table-body tr {
+        transition: all 0.3s ease;
+    }
+
+    /* Flash khi giá tăng */
+    .flash-up {
+    background-color: rgba(76,175,80,0.25);
+    transition: background-color 0.4s ease;
+    }
+
+    /* Flash khi giá giảm */
+    .flash-down {
+    background-color: rgba(255,82,82,0.25);
+    transition: background-color 0.4s ease;
+    }
+
+    .near-tp {
+      box-shadow: 0 0 10px rgba(76,175,80,0.7);
+    }
+
+    .near-sl {
+      box-shadow: 0 0 10px rgba(255,82,82,0.7);
+    }
+
+    .current-highlight {
+      font-weight: bold;
+      font-size: 0.9rem;
+}
+
+    /* ── Config result ── */
+    #config-result { color: #4caf50; font-size: 0.9rem; }
+
+    code { color: #80cbc4; font-size: 0.85rem; }
+
+    .flex-row { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+  </style>
+</head>
+<body>
+<div class="container">
+
+  <h2 class="page-title">📊 Quant Research Control Panel</h2>
+  <p class="page-sub">Realtime trading analytics &amp; risk monitoring</p>
+
+  {% if no_data %}
+  <p style="color:#888;">⏳ Chưa có lệnh đóng.</p>
+  {% endif %}
+
+  {% if risk_alert %}
+  <div class="alert">⚠️ Risk Alert: Drawdown vượt ngưỡng an toàn!</div>
+  {% endif %}
+
+  <!-- ═══════════════════════════════════════════
+       OVERVIEW METRICS
+  ═══════════════════════════════════════════ -->
+  <div class="section">
+    <div class="metric-grid">
+      <div class="metric">
+        <div class="metric-label">Total Trades</div>
+        <div class="metric-value" style="color:#ccc;">{{ overall.total_trades }}</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Winrate</div>
+        <div class="metric-value" style="color:{% if overall.winrate_percent >= 60 %}#4caf50{% else %}#ff5252{% endif %};">
+          {{ overall.winrate_percent }}%
+        </div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Sharpe</div>
+        <div class="metric-value" style="color:#64b5f6;">{{ overall.sharpe_ratio }}</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Sharpe 30d</div>
+        <div class="metric-value" style="color:#64b5f6;">{{ rolling_sharpe }}</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Max DD</div>
+        <div class="metric-value" style="color:#ff5252;">{{ overall.max_drawdown_percent }}%</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Profit Factor</div>
+        <div class="metric-value" style="color:#ffb74d;">{{ overall.profit_factor }}</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Expectancy</div>
+        <div class="metric-value" style="color:#a5d6a7;">{{ overall.expectancy_percent }}%</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════
+       WEEKLY vs MONTHLY
+  ═══════════════════════════════════════════ -->
+  <div class="section">
+    <h3 class="section-title">📊 Weekly vs Monthly</h3>
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th style="text-align:left;">Metric</th>
+            <th>Weekly</th>
+            <th>Monthly</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="left">Trades</td>
+            <td class="center">{{ weekly_stats.total_trades }}</td>
+            <td class="center">{{ monthly_stats.total_trades }}</td>
+          </tr>
+          <tr>
+            <td class="left">Winrate</td>
+            <td class="center" style="color:{% if weekly_stats.winrate_percent >= 60 %}#4caf50{% else %}#ff5252{% endif %};">
+              {{ weekly_stats.winrate_percent }}%
+            </td>
+            <td class="center" style="color:{% if monthly_stats.winrate_percent >= 60 %}#4caf50{% else %}#ff5252{% endif %};">
+              {{ monthly_stats.winrate_percent }}%
+            </td>
+          </tr>
+          <tr>
+            <td class="left">Sharpe</td>
+            <td class="center" style="color:#64b5f6;">{{ weekly_stats.sharpe_ratio }}</td>
+            <td class="center" style="color:#64b5f6;">{{ monthly_stats.sharpe_ratio }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════
+       EQUITY CURVE
+  ═══════════════════════════════════════════ -->
+  <div class="section">
+    <h3 class="section-title">📈 Equity Curve</h3>
+    <div class="chart-box h300">
+      <canvas id="equityChart"></canvas>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════
+       DRAWDOWN
+  ═══════════════════════════════════════════ -->
+  <div class="section">
+    <h3 class="section-title">📉 Drawdown</h3>
+    <div class="chart-box h260">
+      <canvas id="drawdownChart"></canvas>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════
+       OPEN POSITIONS
+  ═══════════════════════════════════════════ -->
+  <div class="section">
+    <h3 class="section-title">📌 Open Positions</h3>
+    <div class="table-wrapper">
+      <table style="min-width:800px;">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th style="text-align:left;">Symbol</th>
+            <th style="text-align:left;">Pattern</th>
+            <th>Dir</th>
+            <th>Entry</th>
+            <th>Current</th>
+            <th>Stop Loss</th>
+            <th>Take Profit</th>
+            <th>PnL %</th>
+            <th>Regime</th>
+            <th>Score</th>
+            <th>Opened At</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="open-table-body">
+          {% if not open_positions %}
+          <tr><td colspan="11" class="center" style="color:#888;padding:20px;">Không có lệnh đang mở</td></tr>
+          {% endif %}
+          {% for row in open_positions %}
+          <tr>
+            <td class="center" style="color:#666;">{{ loop.index }}</td>
+            <td class="left"><b style="color:#fff;">{{ row.symbol }}</b></td>
+            <td class="left"><span style="font-size:0.82rem;color:#ccc;">{{ row.pattern }}</span></td>
+            <td class="center">
+              <span class="badge {% if row.direction == 'LONG' %}badge-long{% else %}badge-short{% endif %}">
+                {{ row.direction }}
+              </span>
+            </td>
+            <td class="center" style="color:#ccc;">{{ row.entry }}</td>
+            <td class="center" style="color:#fff;">{{ row.current }}</td>
+            <td class="center" style="color:#ff7043;">{{ row.stop_loss }}</td>
+            <td class="center" style="color:#66bb6a;">{{ row.take_profit }}</td>
+            <td class="center">
+              <b style="color:{{ row.color }};">
+                {% if row.pnl >= 0 %}+{% endif %}{{ row.pnl }}%
+              </b>
+            </td>
+            <td class="center">
+              <span class="badge-regime
+                {% if row.regime == 'TRENDING' %}badge-trending
+                {% elif row.regime == 'BEARISH' %}badge-bearish
+                {% else %}badge-ranging{% endif %}">
+                {{ row.regime }}
+              </span>
+            </td>
+            <td class="center" style="color:#ffb74d;">{{ row.score }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════
+       RECENT CLOSED POSITIONS (10 lệnh gần nhất)
+  ═══════════════════════════════════════════ -->
+  <div class="section">
+    <h3 class="section-title">🕐 Recent Closed Positions <span style="font-size:0.8rem;color:#666;font-weight:normal;">(10 lệnh đóng gần nhất)</span></h3>
+    <div class="table-wrapper">
+      <table style="min-width:1000px;">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th style="text-align:left;">Symbol</th>
+            <th style="text-align:left;">Pattern</th>
+            <th>Dir</th>
+            <th>Entry</th>
+            <th>Exit</th>
+            <th>Stop Loss</th>
+            <th>Take Profit</th>
+            <th>PnL %</th>
+            <th>Status</th>
+            <th>Regime</th>
+            <th>Score</th>
+            <th>Opened At</th>
+            <th>Closed At</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% if not recent_closed %}
+          <tr><td colspan="14" class="center" style="color:#888;padding:20px;">Chưa có lệnh đóng</td></tr>
+          {% endif %}
+          {% for row in recent_closed %}
+          <tr>
+            <td class="center" style="color:#666;">{{ loop.index }}</td>
+            <td class="left"><b style="color:#fff;">{{ row.symbol }}</b></td>
+            <td class="left"><span style="font-size:0.8rem;color:#ccc;">{{ row.pattern }}</span></td>
+            <td class="center">
+              <span class="badge {% if row.direction == 'LONG' %}badge-long{% else %}badge-short{% endif %}">
+                {{ row.direction }}
+              </span>
+            </td>
+            <!--td class="center" style="color:#ccc;">{{ row.entry_price }}</td>
+            <td class="center" style="color:#ccc;">{{ row.exit_price }}</td>
+            <td class="center" style="color:#ff7043;">{{ row.stop_loss }}</td>
+            <td class="center" style="color:#66bb6a;">{{ row.take_profit }}</td-->
+            <td class="center price-cell" style="color:#ccc;" data-entry="{{ row.entry_price }}" data-val="{{ row.entry_price }}">{{ row.entry_price }}</td>
+            <td class="center price-cell" style="color:#ccc;" data-entry="{{ row.entry_price }}" data-val="{{ row.exit_price }}">{{ row.exit_price }}</td>
+            <td class="center price-cell" style="color:#ff7043;" data-entry="{{ row.entry_price }}" data-val="{{ row.stop_loss }}">{{ row.stop_loss }}</td>
+            <td class="center price-cell" style="color:#66bb6a;" data-entry="{{ row.entry_price }}" data-val="{{ row.take_profit }} ">{{ row.take_profit }}</td>
+            <td class="center">
+              <b style="color:{% if row.status == 'WIN' %}#4caf50{% else %}#ff5252{% endif %};">
+                {% if row.result_percent >= 0 %}+{% endif %}{{ row.result_percent }}%
+              </b>
+            </td>
+            <td class="center">
+              <span class="badge {% if row.status == 'WIN' %}badge-win{% else %}badge-loss{% endif %}">
+                {% if row.status == 'WIN' %}🎯 {{ row.status }}{% else %}🔴 {{ row.status }}{% endif %}
+              </span>
+            </td>
+            <td class="center">
+              <span class="badge-regime
+                {% if row.regime == 'TRENDING' %}badge-trending
+                {% elif row.regime == 'BEARISH' %}badge-bearish
+                {% else %}badge-ranging{% endif %}">
+                {{ row.regime }}
+              </span>
+            </td>
+            <td class="center" style="color:#ffb74d;">{{ row.score }}</td>
+            <td class="center" style="color:#777;font-size:0.78rem;">
+              {{ (row.created_at + timedelta(hours=7)).strftime('%Y-%m-%d %H:%M') if row.created_at else '-' }}
+            </td>
+
+            <td class="center" style="color:#777;font-size:0.78rem;">
+              {{ (row.exit_time + timedelta(hours=7)).strftime('%Y-%m-%d %H:%M') if row.exit_time else '-' }}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════
+       PATTERN BREAKDOWN
+  ═══════════════════════════════════════════ -->
+  <div class="section">
+    <h3 class="section-title">📊 Pattern Breakdown</h3>
+    <div class="table-wrapper">
+      <table style="min-width:540px;">
+        <thead>
+          <tr>
+            <th style="text-align:left;">Pattern</th>
+            <th>Trades</th>
+            <th>Winrate</th>
+            <th>Expectancy</th>
+            <th>Profit Factor</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in pattern_stats %}
+          <tr>
+            <td class="left" style="color:#ddd;">{{ p.name }}</td>
+            <td class="center" style="color:#ccc;">{{ p.trades }}</td>
+            <td class="center" style="color:{% if p.winrate >= 60 %}#4caf50{% else %}#ff5252{% endif %};">{{ p.winrate }}%</td>
+            <td class="center" style="color:{% if p.expectancy >= 0 %}#4caf50{% else %}#ff5252{% endif %};">
+              {% if p.expectancy >= 0 %}+{% endif %}{{ p.expectancy }}%
+            </td>
+            <td class="center" style="color:{% if p.profit_factor >= 1.5 %}#ffb74d{% else %}#888{% endif %};">{{ p.profit_factor }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════
+       REGIME BREAKDOWN
+  ═══════════════════════════════════════════ -->
+  <div class="section">
+    <h3 class="section-title">🌍 Regime Breakdown</h3>
+    <div class="table-wrapper">
+      <table style="min-width:540px;">
+        <thead>
+          <tr>
+            <th style="text-align:left;">Regime</th>
+            <th>Trades</th>
+            <th>Winrate</th>
+            <th>Expectancy</th>
+            <th>Profit Factor</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for r in regime_stats %}
+          <tr>
+            <td class="left">
+              <span class="badge-regime
+                {% if r.name == 'TRENDING' %}badge-trending
+                {% elif r.name == 'BEARISH' %}badge-bearish
+                {% else %}badge-ranging{% endif %}">
+                {{ r.name }}
+              </span>
+            </td>
+            <td class="center" style="color:#ccc;">{{ r.trades }}</td>
+            <td class="center" style="color:{% if r.winrate >= 60 %}#4caf50{% else %}#ff5252{% endif %};">{{ r.winrate }}%</td>
+            <td class="center" style="color:{% if r.expectancy >= 0 %}#4caf50{% else %}#ff5252{% endif %};">
+              {% if r.expectancy >= 0 %}+{% endif %}{{ r.expectancy }}%
+            </td>
+            <td class="center" style="color:{% if r.profit_factor >= 1.5 %}#ffb74d{% else %}#888{% endif %};">{{ r.profit_factor }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════
+       RUNTIME CONFIG
+  ═══════════════════════════════════════════ -->
+  <div class="section">
+    <h3 class="section-title">⚙ Runtime Config</h3>
+    <div class="table-wrapper">
+      <table>
+        <thead>
+          <tr>
+            <th style="text-align:left;">Key</th>
+            <th style="text-align:left;">Value</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="left"><code>BODY_RATIO_THRESHOLD</code></td>
+            <td><input id="BODY_RATIO_THRESHOLD" value="{{ config.BODY_RATIO_THRESHOLD }}"></td>
+          </tr>
+          <tr>
+            <td class="left"><code>TIMEFRAME</code></td>
+            <td>
+              <select id="TIMEFRAME">
+                <option value="15m" {{ 'selected' if config.TIMEFRAME == '15m' else '' }}>15m</option>
+                <option value="1h"  {{ 'selected' if config.TIMEFRAME == '1h'  else '' }}>1h</option>
+                <option value="4h"  {{ 'selected' if config.TIMEFRAME == '4h'  else '' }}>4h</option>
+                <option value="1d"  {{ 'selected' if config.TIMEFRAME == '1d'  else '' }}>1d</option>
+              </select>
+            </td>
+          </tr>
+          <tr>
+            <td class="left"><code>SCORE_THRESHOLD</code></td>
+            <td><input id="SCORE_THRESHOLD" value="{{ config.SCORE_THRESHOLD }}"></td>
+          </tr>
+          <tr>
+            <td class="left"><code>VOLUME_MULTIPLIER</code></td>
+            <td><input id="VOLUME_MULTIPLIER" value="{{ config.VOLUME_MULTIPLIER }}"></td>
+          </tr>
+          <tr>
+            <td class="left"><code>ATR_RATIO_MIN</code></td>
+            <td><input id="ATR_RATIO_MIN" value="{{ config.ATR_RATIO_MIN }}"></td>
+          </tr>
+          <tr>
+            <td class="left"><code>COOLDOWN_HOURS</code></td>
+            <td><input id="COOLDOWN_HOURS" value="{{ config.COOLDOWN_HOURS }}"></td>
+          </tr>
+          <tr>
+            <td class="left"><code>AI_THRESHOLD</code></td>
+            <td><input id="AI_THRESHOLD" value="{{ config.AI_THRESHOLD }}"></td>
+          </tr>
+          <tr>
+            <td class="left"><code>TOP_LIMIT</code></td>
+            <td><input id="TOP_LIMIT" value="{{ config.TOP_LIMIT }}"></td>
+          </tr>
+          <tr>
+            <td class="left"><code>MTF_ENABLED</code></td>
+            <td>
+              <select id="MTF_ENABLED">
+                <option value="true"  {% if config.MTF_ENABLED == True  %}selected{% endif %}>true</option>
+                <option value="false" {% if config.MTF_ENABLED == False %}selected{% endif %}>false</option>
+              </select>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="flex-row">
+      <button onclick="saveConfig()">💾 Lưu Config</button>
+      <span id="config-result"></span>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════
+       AI ASSISTANT
+  ═══════════════════════════════════════════ -->
+  <div class="section">
+    <h3 class="section-title">🧠 AI Assistant</h3>
+    <textarea id="question" rows="3" placeholder="Nhập câu hỏi phân tích..."></textarea>
+    <button style="margin-top:8px;" onclick="askAI()">🤖 Hỏi AI</button>
+    <div id="ai-answer"></div>
+  </div>
+
+  <div style="height:40px;"></div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     CHARTS + JS
+═══════════════════════════════════════════ -->
+<script>
+  /* ── Chart options helper ── */
+  const chartOpts = (label, color) => ({
+    type: 'line',
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#ccc' } } },
+      scales: {
+        x: { ticks: { color: '#888' }, grid: { color: '#2a2a2a' } },
+        y: { ticks: { color: '#888' }, grid: { color: '#2a2a2a' } }
+      }
+    }
+  });
+
+  new Chart(document.getElementById("equityChart"), {
+    type: 'line',
+    data: {
+      labels: {{ labels | safe }},
+      datasets: [{
+        label: 'Equity',
+        data: {{ equity | safe }},
+        borderColor: 'rgb(75,192,192)',
+        backgroundColor: 'rgba(75,192,192,0.08)',
+        fill: true, tension: 0.3,
+        pointRadius: 4, pointHoverRadius: 6, borderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#ccc' } } },
+      scales: {
+        x: { ticks: { color: '#888' }, grid: { color: '#2a2a2a' } },
+        y: { ticks: { color: '#888' }, grid: { color: '#2a2a2a' } }
+      }
+    }
+  });
+
+  new Chart(document.getElementById("drawdownChart"), {
+    type: 'line',
+    data: {
+      labels: {{ labels | safe }},
+      datasets: [{
+        label: 'Drawdown (%)',
+        data: {{ drawdowns | safe }},
+        borderColor: 'rgb(255,82,82)',
+        backgroundColor: 'rgba(255,82,82,0.08)',
+        fill: true, tension: 0.3,
+        pointRadius: 4, pointHoverRadius: 6, borderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: '#ccc' } } },
+      scales: {
+        x: { ticks: { color: '#888' }, grid: { color: '#2a2a2a' } },
+        y: { ticks: { color: '#888' }, grid: { color: '#2a2a2a' } }
+      }
+    }
+  });
+
+  /* ── AI ── */
+  async function askAI() {
+    const question = document.getElementById("question").value;
+    const el = document.getElementById("ai-answer");
+    el.innerText = "🤖 Đang phân tích...";
+    el.style.display = "block";
+    const response = await fetch("/assistant", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(question)
+    });
+    const data = await response.json();
+    el.innerText = data.answer;
+  }
+
+  /* ── Refresh Open Positions ── */
+
+    let previousPrices = {};
+
+async function refreshOpenPositions() 
+  {
+    const res = await fetch("/api/open-positions");
+    const data = await res.json();
+    
+    const tbody = document.getElementById("open-table-body");
+    tbody.innerHTML = "";
+
+    if (data.length === 0) {
+        tbody.innerHTML = `
+        <tr>
+            <td colspan="11" class="center" style="color:#888;padding:20px;">
+            Không có lệnh đang mở
+            </td>
+        </tr>`;
+        return;
+    }
+
+    data.forEach((row, index) => {
+    const entry = parseFloat(row.entry); // Lấy giá trị entry để làm chuẩn
+    tbody.innerHTML += `
+        <tr>
+            <td class="center">${index+1}</td>
+
+            <td class="left">
+                <b style="color:#fff;">${row.symbol}</b>
+            </td>
+
+            <td class="left">${row.pattern ?? "-"}</td>
+
+            <td class="center">
+                <span class="badge ${row.direction === 'LONG' ? 'badge-long' : 'badge-short'}">
+                    ${row.direction}
+                </span>
+            </td>
+
+            <!-- ✅ Entry KHÔNG được mất -->
+            <td class="center">${row.entry}</td>
+
+            <!-- ✅ Current -->
+            <td class="center current-cell current-highlight"
+                data-symbol="${row.symbol}"
+                data-tp="${row.take_profit}"
+                data-sl="${row.stop_loss}">
+                ${row.current}
+            </td>
+
+            <td class="center" style="color:#ff7043;">${formatByEntry(row.stop_loss, entry)}</td>
+            <td class="center" style="color:#66bb6a;">${formatByEntry(row.take_profit, entry)}</td>
+
+            <!-- ✅ PnL -->
+            <td class="center">
+                <b style="color:${row.color}">
+                    ${row.pnl >= 0 ? '+' : ''}${row.pnl}%
+                </b>
+            </td>
+
+            <td class="center">
+                <span class="badge-regime">
+                    ${row.regime ?? "-"}
+                </span>
+            </td>
+
+            <td class="center" style="color:#ffb74d;">
+                ${row.score ?? "-"}
+            </td>
+            <td class="center" style="color:#777;font-size:0.78rem;">${row.created_at ?? "-"}</td>
+            <td class="center">
+                <button onclick="manualClose(${row.id})"
+                    style="background:#ff5252;padding:4px 10px;font-size:0.75rem;">
+                    Close
+                </button>
+            </td>
+        </tr>
+    `;
+});
+// So sánh giá cũ và mới
+        document.querySelectorAll(".current-cell").forEach(cell => {
+
+        const symbol = cell.getAttribute("data-symbol");
+        const newPrice = parseFloat(cell.innerText);
+
+        const oldPrice = previousPrices[symbol];
+
+        if (oldPrice !== undefined) {
+
+            if (newPrice > oldPrice) {
+            cell.classList.add("flash-up");
+            setTimeout(() => cell.classList.remove("flash-up"), 400);
+            }
+
+            if (newPrice < oldPrice) {
+            cell.classList.add("flash-down");
+            setTimeout(() => cell.classList.remove("flash-down"), 400);
+            }
+        }
+
+        const tp = parseFloat(cell.dataset.tp);
+        const sl = parseFloat(cell.dataset.sl);
+
+        if (!isNaN(tp)) {
+            const diffTp = Math.abs((newPrice - tp) / tp * 100);
+            if (diffTp < 1) {
+                cell.classList.add("near-tp");
+            } else {
+                cell.classList.remove("near-tp");
+            }
+        }
+
+        if (!isNaN(sl)) {
+            const diffSl = Math.abs((newPrice - sl) / sl * 100);
+            if (diffSl < 1) {
+                cell.classList.add("near-sl");
+            } else {
+                cell.classList.remove("near-sl");
+            }
+        }
+        
+        previousPrices[symbol] = newPrice;
+        });
+    }
+    
+    refreshOpenPositions();
+    setInterval(refreshOpenPositions, 5000); // 5 giây một lần
+    
+
+  /* ── Gọi đóng lệnh tự động ── */
+  async function manualClose(id) {
+
+    if (!confirm("Đóng lệnh này?")) return;
+
+    const res = await fetch(`/close/${id}`, {
+    method: "POST",
+    headers: {
+        "Content-Type": "application/json"
+    }
+});
+
+    const data = await res.json();
+
+    if (data.status === "closed") {
+        refreshOpenPositions();  // ✅ reload bảng ngay
+    } else {
+        alert("Close failed");
+    }
+}
+  /* ── Save Config ── */
+  async function saveConfig() {
+    const payload = {
+      BODY_RATIO_THRESHOLD: document.getElementById("BODY_RATIO_THRESHOLD").value,
+      VOLUME_MULTIPLIER:    document.getElementById("VOLUME_MULTIPLIER").value,
+      ATR_RATIO_MIN:        document.getElementById("ATR_RATIO_MIN").value,
+      COOLDOWN_HOURS:       document.getElementById("COOLDOWN_HOURS").value,
+      AI_THRESHOLD:         document.getElementById("AI_THRESHOLD").value,
+      TOP_LIMIT:            document.getElementById("TOP_LIMIT").value,
+      TIMEFRAME:            document.getElementById("TIMEFRAME").value,
+      SCORE_THRESHOLD:      document.getElementById("SCORE_THRESHOLD").value,
+      MTF_ENABLED:          document.getElementById("MTF_ENABLED").value
+    };
+    const res = await fetch("/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    const el = document.getElementById("config-result");
+    el.innerText = data.status || "✅ Đã cập nhật";
+    setTimeout(() => { el.innerText = ""; }, 3000);
+  }
+
+  function getDecimalCount(num) {
+    const str = num.toString();
+    if (str.includes('.')) {
+        return str.split('.')[1].length;
+    }
+    return 0;
+}
+
+/**
+ * Format số theo số chữ số thập phân của entry, tối thiểu 2, tối đa 8
+ */
+function formatByEntry(value, entry) {
+    if (value === null || value === undefined) return "-";
+    
+    // Lấy số chữ số thập phân của entry
+    const decimalPlaces = Math.max(2, Math.min(getDecimalCount(entry), 8));
+    
+    return parseFloat(value).toFixed(decimalPlaces);
+}
+
+</script>
+
+<script>
+document.addEventListener("DOMContentLoaded", function() {
+    document.querySelectorAll(".price-cell").forEach(cell => {
+        const entryRaw = cell.getAttribute("data-entry");
+        const valRaw = cell.getAttribute("data-val");
+        
+        if (entryRaw && valRaw && valRaw !== "None") {
+            const entry = parseFloat(entryRaw);
+            const val = parseFloat(valRaw);
+            
+            // Sử dụng hàm formatByEntry chúng ta đã tạo ở bước trước
+            cell.innerText = formatByEntry(val, entry);
+        }
+    });
+});
+</script>
+
+</body>
+</html>

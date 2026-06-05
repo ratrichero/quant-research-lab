@@ -1,0 +1,12 @@
+fastapi==0.110.0
+uvicorn==0.29.0
+pandas==2.2.2
+numpy==1.26.4
+requests==2.31.0
+sqlalchemy==2.0.29
+psycopg2-binary==2.9.9
+python-dotenv==1.0.1
+xgboost==2.0.3
+scikit-learn==1.4.2
+joblib==1.4.2
+jinja2
