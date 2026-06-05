@@ -1,6 +1,6 @@
 from sqlalchemy.sql import func
 from app.db.session import Base
-from sqlalchemy import Column, BigInteger, Numeric, Integer, String, ForeignKey, DateTime
+from sqlalchemy import Column, BigInteger, Numeric, Integer, String, ForeignKey, DateTime,Float,Boolean
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.db.session import Base
@@ -96,3 +96,62 @@ class TradeOutcomeAnalytics(Base):
     exit_reason = Column(String)
 
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class ScanConfig(Base):
+    __tablename__ = "scan_config"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    timeframe = Column(String)
+
+    score_threshold = Column(Float)
+    body_ratio_threshold = Column(Float)
+    volume_multiplier = Column(Float)
+    atr_ratio_min = Column(Float)
+    cooldown_hours = Column(Float)
+    ai_threshold = Column(Float)
+    top_limit = Column(Integer)
+    mtf_enabled = Column(Boolean)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class ScanRun(Base):
+    __tablename__ = "scan_run"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    timeframe = Column(String)
+    scan_time = Column(DateTime, default=datetime.utcnow)
+
+    config_id = Column(Integer, ForeignKey("scan_config.id"))
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+class ScanDebug(Base):
+    __tablename__ = "scan_debug"
+
+    id = Column(Integer, primary_key=True, index=True)
+
+    scan_id = Column(Integer, ForeignKey("scan_run.id"))
+
+    symbol = Column(String)
+    pattern = Column(String)
+    direction = Column(String)
+
+    trend_score = Column(Float)
+    momentum_score = Column(Float)
+    volume_score = Column(Float)
+    pattern_score = Column(Float)
+    mtf_score = Column(Float)
+    penalty = Column(Float)
+
+    total_score = Column(Float)
+    passed_score = Column(Boolean)
+
+    block_reason = Column(String)
+    regime = Column(String)
+    ml_prob = Column(Float)
+    candle_time = Column(DateTime)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+

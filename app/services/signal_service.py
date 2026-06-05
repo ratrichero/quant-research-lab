@@ -2,6 +2,7 @@ import pandas as pd
 import numpy as np
 from datetime import datetime, timezone, timedelta
 import time
+import traceback
 
 from app.services.binance_service import get_top_symbols, get_klines,get_klines_closed
 from app.services.indicator_service import add_indicators, add_indicators_advanced, detect_regime, detect_regime_advanced, get_market_state
@@ -14,6 +15,7 @@ from app.db.models import Signal, SignalFeature  # ← CHANGED: gộp import
 from app.ml.predict import predict_prob
 from app.ml.features import build_features_from_row
 from app.services.llm_router import generate_explanation
+from app.db.models import ScanConfig, ScanRun, ScanDebug
 
 
 
@@ -50,6 +52,20 @@ def fmt(val, width, decimals=2):
         s = s[:width]
     return f"{s:>{width}}"
 
+def sanitize_value(v):
+    # numpy → python native
+    if isinstance(v, (np.floating, np.integer)):
+        return float(v)
+
+    # pandas Timestamp → datetime
+    if isinstance(v, pd.Timestamp):
+        return v.to_pydatetime()
+
+    return v
+
+
+def sanitize_row(row: dict):
+    return {k: sanitize_value(v) for k, v in row.items()}
 
 # ============================================================
 # SCORE BAR + COLOR
@@ -92,6 +108,10 @@ def get_higher_timeframe(tf: str) -> str:
 
 def calculate_score(df, pattern, cfg, symbol, timeframe, htf_df=None):  # ← CHANGED: thêm htf_df
 
+    # ✅ FIX: tránh crash khi thiếu dữ liệu
+    if df is None or len(df) < 3:
+        return 0, None, {}
+    
     last = df.iloc[-1]
     prev = df.iloc[-2]
 
@@ -200,9 +220,17 @@ def calculate_score(df, pattern, cfg, symbol, timeframe, htf_df=None):  # ← CH
     # ← CHANGED: không còn gọi get_klines bên trong
     # Dùng htf_df được truyền vào từ scan_timeframe
     if cfg.get("MTF_ENABLED", False) and htf_df is not None:
-        htf_last   = htf_df.iloc[-2]
-        htf_ema200 = htf_last.get("ema200")
-        htf_rsi    = htf_last.get("rsi")
+        
+        htf_last = None
+        htf_ema200 = None
+        htf_rsi = None
+
+        if htf_df is not None and len(htf_df) >= 2:
+            htf_last = htf_df.iloc[-1]
+
+        if htf_last is not None:
+            htf_ema200 = htf_last.get("ema200")
+            htf_rsi = htf_last.get("rsi")
 
         if htf_ema200 and htf_ema200 != 0:
             htf_distance     = (htf_last["close"] - htf_ema200) / htf_ema200
@@ -335,6 +363,27 @@ def run_market_scan_single_tf(timeframe):
 
 def scan_timeframe(db, timeframe, runtime_cfg):
 
+    config = ScanConfig(
+    timeframe=timeframe,
+    score_threshold=runtime_cfg["SCORE_THRESHOLD"],
+    body_ratio_threshold=runtime_cfg["BODY_RATIO_THRESHOLD"],
+    volume_multiplier=runtime_cfg["VOLUME_MULTIPLIER"],
+    atr_ratio_min=runtime_cfg["ATR_RATIO_MIN"],
+    cooldown_hours=runtime_cfg["COOLDOWN_HOURS"],
+    ai_threshold=runtime_cfg["AI_THRESHOLD"],
+    top_limit=runtime_cfg["TOP_LIMIT"],
+    mtf_enabled=runtime_cfg["MTF_ENABLED"]
+    )
+    db.add(config)
+    db.flush()  # lấy config.id
+
+    scan_run = ScanRun(
+    timeframe=timeframe,
+    config_id=config.id
+    )
+    db.add(scan_run)
+    db.flush()  # lấy scan_run.id
+
     symbols         = get_top_symbols(runtime_cfg["TOP_LIMIT"])
     SCORE_THRESHOLD = runtime_cfg["SCORE_THRESHOLD"]
     BATCH_SIZE      = 100
@@ -373,7 +422,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                 # ── Primary TF ──────────────────────────────
                 df = get_klines_closed(symbol, interval=timeframe)
                 #debug_candle_status(df, timeframe, symbol)
-                if df.empty or len(df) < 200:
+                if df is None or df.empty or len(df) < 3:
                     continue
 
                 df = add_indicators_advanced(
@@ -383,6 +432,10 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     atr_period=14,
                     volume_ma_period=20
                 )
+
+                # ✅ FIX QUAN TRỌNG
+                last = df.iloc[-1]
+                prev = df.iloc[-2]
 
                 pattern = detect_pattern(df)
                 if not pattern:
@@ -399,7 +452,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                         try:
                             raw_htf = get_klines_closed(symbol, interval=higher_tf, limit=200)
 
-                            if not raw_htf.empty and len(raw_htf) >= 50:
+                            if raw_htf is not None and not raw_htf.empty and len(raw_htf) >= 50:
                                 htf_cache[symbol] = add_indicators_advanced(raw_htf)
                             else:
                                 htf_cache[symbol] = None
@@ -417,17 +470,22 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                 )
 
                 debug_rows.append({
-                    "symbol":       symbol,
-                    "pattern":      pattern,
-                    "trend":        components.get("trend_score"),
-                    "momentum":     components.get("momentum_score"),
-                    "volume":       components.get("volume_score"),
+                    "symbol": symbol,
+                    "pattern": pattern,
+                    "direction": direction,
+                    "trend": components.get("trend_score"),
+                    "momentum": components.get("momentum_score"),
+                    "volume": components.get("volume_score"),
                     "pattern_score": components.get("pattern_score"),
-                    "mtf":          components.get("mtf_score"),
-                    "penalty":      components.get("strict_penalty"),
-                    "total_score":  score,
+                    "mtf": components.get("mtf_score"),
+                    "penalty": components.get("strict_penalty"),
+                    "total_score": score,
                     "passed_score": score >= SCORE_THRESHOLD,
-                    "block_reason": None
+                    "block_reason": None,
+                    "candle_time": last["time"].to_pydatetime(),
+                    "ml_prob": None,
+                    "regime": None,
+                    "debug_id": None
                 })
 
                 if score < SCORE_THRESHOLD:
@@ -442,6 +500,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     lookback=10,
                     threshold=0.002
                 )
+                debug_rows[-1]["regime"] = regime
 
                 if regime == "BULL" and direction != "LONG":
                     debug_rows[-1]["block_reason"] = "regime_mismatch"
@@ -467,7 +526,10 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     continue
 
                 # ── Duplicate + Cooldown ─────────────────────
-                last        = df.iloc[-2]
+                if df is None or len(df) < 2:
+                    continue
+                last = df.iloc[-1]
+                
                 candle_time = last["time"].to_pydatetime()
 
                 if is_duplicate(db, symbol, timeframe, candle_time):
@@ -482,7 +544,10 @@ def scan_timeframe(db, timeframe, runtime_cfg):
 
                 # ── ML filter ────────────────────────────────
                 features = build_features_from_row(last, components, direction)
-                prob     = predict_prob(features)
+                prob = predict_prob(features)
+                
+                # ✅ GÁN ml_prob vào debug row
+                debug_rows[-1]["ml_prob"] = float(prob) if prob is not None else None
 
                 if prob is not None and prob < runtime_cfg["AI_THRESHOLD"]:
                     debug_rows[-1]["block_reason"] = "ml_threshold"
@@ -546,6 +611,15 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                 )
                 db.add(signal)
                 db.flush()
+                
+                debug_id = debug_rows[-1]["debug_id"]
+
+                if debug_id:
+                    db.query(ScanDebug).filter(
+                        ScanDebug.id == debug_id
+                    ).update({
+                        "signal_id": signal.id
+                    })
 
                 feature = SignalFeature(
                     signal_id      = signal.id,
@@ -596,6 +670,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
             except Exception as e:
                 db.rollback()
                 print(f"❌ Error {symbol}: {type(e).__name__} - {e}")
+                traceback.print_exc()
 
         time.sleep(BATCH_SLEEP)
 
@@ -718,5 +793,31 @@ def scan_timeframe(db, timeframe, runtime_cfg):
     if scan_stats["pattern_detected"] > 0 and scan_stats["ml_blocked"] > scan_stats["pattern_detected"] * 0.5:
         print(f"\n⚠️  WARNING: ML block {scan_stats['ml_blocked']}/{scan_stats['pattern_detected']} patterns")
         print("   → Model filter quá aggressive, kiểm tra AI_THRESHOLD")
+
+    for row in debug_rows:
+        
+        row = sanitize_row(row)   # ✅ THÊM DÒNG NÀY
+        debug = ScanDebug(
+            scan_id=scan_run.id,
+            symbol=row["symbol"],
+            pattern=row["pattern"],
+            direction=row["direction"],
+            trend_score=row["trend"],
+            momentum_score=row["momentum"],
+            volume_score=row["volume"],
+            pattern_score=row["pattern_score"],
+            mtf_score=row["mtf"],
+            penalty=row["penalty"],
+            total_score=row["total_score"],
+            passed_score=row["passed_score"],
+            block_reason=row["block_reason"],
+            regime=row["regime"],
+            candle_time=row["candle_time"],
+            ml_prob=row["ml_prob"]
+        )
+
+        db.add(debug)
+
+    db.commit()
 
     return scan_stats

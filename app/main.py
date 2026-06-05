@@ -85,6 +85,7 @@ async def start_local_scheduler():
     async def loop():
         while True:
             run_market_scan_multi_tf()
+            
             await asyncio.sleep(60)
 
     asyncio.create_task(loop())
