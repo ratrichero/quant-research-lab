@@ -151,7 +151,7 @@ def calculate_score(df, pattern, cfg, symbol, timeframe, htf_df=None):  # ← CH
     ema200 = last.get("ema200")
     ema50  = last.get("ema50")
 
-    if ema200 is not None and ema200 != 0:
+    if ema200 is not None and not pd.isna(ema200) and ema200 != 0:
         distance     = (last["close"] - ema200) / ema200
         abs_distance = abs(distance)
 
@@ -160,14 +160,14 @@ def calculate_score(df, pattern, cfg, symbol, timeframe, htf_df=None):  # ← CH
                 trend_score += 2
             elif abs_distance < 0.02:
                 trend_score += 1
-            if ema50 and ema50 > ema200:
+            if ema50 is not None and ema200 is not None and ema50 > ema200:
                 trend_score += 1
         else:
             if last["close"] < ema200:
                 trend_score += 2
             elif abs_distance < 0.02:
                 trend_score += 1
-            if ema50 and ema50 < ema200:
+            if ema50 is not None and ema200 is not None and ema50 < ema200:
                 trend_score += 1
 
     # ── Momentum ────────────────────────────────────────────
@@ -192,8 +192,10 @@ def calculate_score(df, pattern, cfg, symbol, timeframe, htf_df=None):  # ← CH
 
     # ── Volume ──────────────────────────────────────────────
     vol_ratio = None
+
     if last.get("vol_ma") and last["vol_ma"] > 0:
-        vol_ratio = last["volume"] / last["vol_ma"]
+        vol_ratio = float(last["volume"]) / float(last["vol_ma"])
+
         if vol_ratio > 2:
             volume_score += 2
         elif vol_ratio > cfg["VOLUME_MULTIPLIER"]:
@@ -518,8 +520,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     "block_reason": None,
                     "candle_time": last["time"].to_pydatetime(),
                     "ml_prob": None,
-                    "regime": regime,
-                    "debug_id": None
+                    "regime": regime
                 })
 
                 # ================= FILTER =================
@@ -618,13 +619,14 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                 ema200 = last.get("ema200")
                 close_price = last.get("close")
 
-                ema_distance = None
-                if ema200 and close_price and ema200 != 0:
-                    ema_distance = (close_price - ema200) / ema200
+                if pd.notna(ema200) and pd.notna(close_price) and ema200 != 0:
+                    ema_distance = float(close_price - ema200) / float(ema200)
+                else:
+                    ema_distance = 0.0
 
                 atr_ratio = None
                 if last.get("atr") and close_price and close_price != 0:
-                    atr_ratio = last["atr"] / close_price
+                    atr_ratio = float(last["atr"]) / float(close_price)
 
                 # ================= SAVE SIGNAL =================
                 signal = Signal(
@@ -665,7 +667,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     trend_score=safe(components.get("trend_score")),
                     momentum_score=safe(components.get("momentum_score")),
                     volume_score=safe(components.get("volume_score")),
-                    ema_distance=safe(ema_distance),
+                    ema_distance=safe(ema_distance if ema_distance is not None else 0),
                     pattern_score=safe(components.get("pattern_score")),
                     mtf_score=safe(components.get("mtf_score")),
                     total_score=safe(score),
@@ -683,25 +685,35 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                 # ================= TELEGRAM =================
                 prob_text = f"{prob:.2f}" if prob is not None else "N/A"
                 rr_text = f"{rr:.2f}" if rr is not None else "N/A"
-                local_time = to_local_time(candle_time)
+
+                # ✅ 1. Tính Close Time (tránh hiểu nhầm trễ 15p)
+                duration_map = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440}
+                minutes = duration_map.get(timeframe, 15)
+                close_time = candle_time + timedelta(minutes=minutes)
+                local_time = to_local_time(close_time)
+
+                # ✅ 2. Thêm icon khung & tag confidence
+                tf_icon = {"15m": "⚡", "1h": "🕐", "4h": "🕓", "1d": "📅"}.get(timeframe, "🕒")
+                confidence_tag = " 🔥 HIGH CONF" if (prob is not None and prob >= 0.7) else ""
+                score_tag = " 🌟" if (score is not None and score >= 8) else ""
 
                 message = (
-                    f"🚨 <b>SIGNAL ALERT</b>\n\n"
+                    f"🚨 <b>SIGNAL ALERT</b>{score_tag}\n\n"
                     f"<b>Symbol:</b> {symbol}\n"
+                    f"<b>Timeframe:</b> {timeframe} {tf_icon}\n"
                     f"<b>Pattern:</b> {pattern}\n"
                     f"<b>Direction:</b> {direction}\n"
                     f"<b>Regime:</b> {regime}\n"
                     f"<b>Score:</b> {score}\n"
-                    f"<b>AI Prob:</b> {prob_text}\n\n"
+                    #f"<b>AI Prob:</b> {prob_text}{confidence_tag}\n\n"
                     f"<b>Entry:</b> {entry:.4f}\n"
                     f"<b>Stop Loss:</b> {sl:.4f}\n"
                     f"<b>Take Profit:</b> {tp:.4f}\n"
                     f"<b>RR:</b> {rr_text}\n\n"
-                    f"<b>Candle Time (GMT+7):</b> {local_time}"
+                    f"<b>Candle Close (GMT+7):</b> {local_time}"
                 )
 
                 send_telegram(message)
-
                 print(f"✅ SENT: {symbol} | {pattern} | {direction} | Score={score}")
 
             except Exception as e:
