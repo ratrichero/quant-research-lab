@@ -1,0 +1,299 @@
+﻿Kiểm tra winrate
+
+SELECT 
+    CASE 
+        WHEN score >= 0 AND score < 3 THEN '0–3'
+        WHEN score >= 3 AND score < 5 THEN '3–5'
+        WHEN score >= 5 AND score < 7 THEN '5–7'
+        WHEN score >= 7 AND score <= 10 THEN '7–10'
+        ELSE 'Khác'
+    END AS score_range,
+    COUNT(*) AS total_signals,
+    -- Tính tỉ lệ thắng trên tổng số lệnh đã đóng (WIN + LOSS)
+    -- Nếu bạn muốn tính cả lệnh OPEN thì thay đổi công thức ở mẫu số
+    ROUND(
+        100.0 * COUNT(*) FILTER (WHERE status = 'WIN') / 
+        NULLIF(COUNT(*) FILTER (WHERE status IN ('WIN', 'LOSS')), 0), 
+        2
+    ) AS winrate_percent
+FROM signals
+WHERE status IN ('WIN', 'LOSS') -- Chỉ xét các lệnh đã đóng để tính winrate chính xác
+GROUP BY score_range
+ORDER BY score_range;
+
+| score_range | total_signals | winrate_percent |
+| ----------- | ------------- | --------------- |
+| 5–7         | 464           | 34.48           |
+| 7–10        | 184           | 39.13           |
+
+ viết bộ SQL phân tích scoring engine chuẩn cho bạn
+Và bộ SQL phân tích MTF nữa
+
+Freeze ENGINE_VERSION = 2
+✅ Crawl tối thiểu 200–300 signals
+✅ Chạy phân tích:
+
+rule_score_raw distribution
+mtf_score bucket
+winrate theo timeframe
+Nếu bạn muốn, mình sẽ chuẩn bị bộ SQL phân tích đầy đủ để bạn dùng sau khi crawl xong.
+
+-------------------------------------------------------
+
+1️⃣ COMPONENT-LEVEL PERFORMANCE
+Phân tích từng thành phần xem có thực sự tạo edge không.
+
+✅ 1.1 Winrate theo trend_score bucket
+SQL
+
+SELECT
+    CASE
+        WHEN sf.trend_score < 1 THEN 'LOW'
+        WHEN sf.trend_score < 2 THEN 'MID'
+        ELSE 'HIGH'
+    END AS trend_bucket,
+
+    COUNT(*) AS total_trades,
+
+    ROUND(
+        SUM(CASE WHEN s.status = 'WIN' THEN 1 ELSE 0 END) * 100.0
+        / COUNT(*),
+        2
+    ) AS winrate_percent,
+
+    ROUND(AVG(s.result_percent), 2) AS avg_return
+
+FROM signal_features sf
+JOIN signals s ON s.id = sf.signal_id
+
+WHERE s.status IN ('WIN','LOSS')
+
+GROUP BY trend_bucket
+ORDER BY trend_bucket;
+✅ 1.2 Momentum performance
+SQL
+
+SELECT
+    CASE
+        WHEN sf.momentum_score < 1 THEN 'LOW'
+        WHEN sf.momentum_score < 2 THEN 'MID'
+        ELSE 'HIGH'
+    END AS momentum_bucket,
+
+    COUNT(*) AS total_trades,
+    ROUND(
+        SUM(CASE WHEN s.status='WIN' THEN 1 ELSE 0 END)*100.0
+        / COUNT(*), 2
+    ) AS winrate_percent,
+    ROUND(AVG(s.result_percent), 2) AS avg_return
+
+FROM signal_features sf
+JOIN signals s ON s.id = sf.signal_id
+WHERE s.status IN ('WIN','LOSS')
+GROUP BY momentum_bucket
+ORDER BY momentum_bucket;
+✅ 1.3 Pattern performance
+SQL
+
+SELECT
+    sf.pattern_score,
+    COUNT(*) AS total,
+    ROUND(AVG(s.result_percent), 2) AS avg_return
+FROM signal_features sf
+JOIN signals s ON s.id = sf.signal_id
+WHERE s.status IN ('WIN','LOSS')
+GROUP BY sf.pattern_score
+ORDER BY sf.pattern_score DESC;
+✅ 1.4 Correlation từng component
+(PostgreSQL)
+
+SQL
+
+SELECT
+    CORR(sf.trend_score, s.result_percent)    AS trend_corr,
+    CORR(sf.momentum_score, s.result_percent) AS momentum_corr,
+    CORR(sf.volume_score, s.result_percent)   AS volume_corr,
+    CORR(sf.pattern_score, s.result_percent)  AS pattern_corr,
+    CORR(sf.mtf_score, s.result_percent)      AS mtf_corr
+FROM signal_features sf
+JOIN signals s ON s.id = sf.signal_id
+WHERE s.status IN ('WIN','LOSS');
+✅ 2️⃣ MTF PERFORMANCE
+✅ 2.1 MTF bucket vs winrate
+SQL
+
+SELECT
+    CASE
+        WHEN sf.mtf_score < 0.3 THEN 'LOW'
+        WHEN sf.mtf_score < 0.6 THEN 'MID'
+        ELSE 'HIGH'
+    END AS mtf_bucket,
+
+    COUNT(*) AS total,
+    ROUND(
+        SUM(CASE WHEN s.status='WIN' THEN 1 ELSE 0 END)*100.0
+        / COUNT(*), 2
+    ) AS winrate_percent,
+    ROUND(AVG(s.result_percent), 2) AS avg_return
+
+FROM signal_features sf
+JOIN signals s ON s.id = sf.signal_id
+WHERE s.status IN ('WIN','LOSS')
+GROUP BY mtf_bucket
+ORDER BY mtf_bucket;
+✅ 2.2 MTF theo timeframe
+SQL
+
+SELECT
+    s.timeframe,
+    ROUND(AVG(sf.mtf_score), 3) AS avg_mtf,
+    ROUND(
+        SUM(CASE WHEN s.status='WIN' THEN 1 ELSE 0 END)*100.0
+        / COUNT(*), 2
+    ) AS winrate_percent
+FROM signal_features sf
+JOIN signals s ON s.id = sf.signal_id
+WHERE s.status IN ('WIN','LOSS')
+GROUP BY s.timeframe
+ORDER BY s.timeframe;
+✅ 3️⃣ SCORING ENGINE TỔNG THỂ
+✅ 3.1 rule_score_raw distribution
+SQL
+
+SELECT
+    ROUND(MIN(rule_score_raw), 3) AS min_raw,
+    ROUND(MAX(rule_score_raw), 3) AS max_raw,
+    ROUND(AVG(rule_score_raw), 3) AS avg_raw
+FROM scan_debug;
+✅ 3.2 rule_score bucket vs winrate
+SQL
+
+SELECT
+    CASE
+        WHEN sf.total_score < 4 THEN 'LOW'
+        WHEN sf.total_score < 6 THEN 'MID'
+        WHEN sf.total_score < 8 THEN 'GOOD'
+        ELSE 'HIGH'
+    END AS score_bucket,
+
+    COUNT(*) AS total,
+    ROUND(
+        SUM(CASE WHEN s.status='WIN' THEN 1 ELSE 0 END)*100.0
+        / COUNT(*), 2
+    ) AS winrate_percent,
+    ROUND(AVG(s.result_percent), 2) AS avg_return
+
+FROM signal_features sf
+JOIN signals s ON s.id = sf.signal_id
+WHERE s.status IN ('WIN','LOSS')
+GROUP BY score_bucket
+ORDER BY score_bucket;
+✅ 3.3 Profit Factor theo score bucket
+SQL
+
+SELECT
+    CASE
+        WHEN sf.total_score < 6 THEN 'LOW'
+        ELSE 'HIGH'
+    END AS bucket,
+
+    SUM(CASE WHEN s.result_percent > 0 THEN s.result_percent ELSE 0 END) /
+    NULLIF(ABS(SUM(CASE WHEN s.result_percent < 0 THEN s.result_percent ELSE 0 END)), 0)
+    AS profit_factor
+
+FROM signal_features sf
+JOIN signals s ON s.id = sf.signal_id
+WHERE s.status IN ('WIN','LOSS')
+GROUP BY bucket;
+✅ 4️⃣ PHÂN TÍCH THEO CONFIG / ENGINE VERSION
+✅ 4.1 Performance theo engine_version
+(PostgreSQL JSONB)
+
+SQL
+
+SELECT
+    sr.engine_metadata->>'engine_version' AS engine_version,
+    COUNT(*) AS total,
+    ROUND(AVG(s.result_percent), 2) AS avg_return
+FROM signals s
+JOIN scan_run sr ON s.scan_run_id = sr.id
+WHERE s.status IN ('WIN','LOSS')
+GROUP BY engine_version;
+✅ 4.2 Performance theo timeframe + engine_version
+SQL
+
+SELECT
+    s.timeframe,
+    sr.engine_metadata->>'engine_version' AS engine_version,
+    COUNT(*) AS total,
+    ROUND(AVG(s.result_percent), 2) AS avg_return
+FROM signals s
+JOIN scan_run sr ON s.scan_run_id = sr.id
+WHERE s.status IN ('WIN','LOSS')
+GROUP BY s.timeframe, engine_version
+ORDER BY s.timeframe;
+✅ 5️⃣ PHÂN TÍCH NÂNG CAO (Khuyên thêm)
+✅ 5.1 Interaction: High MTF + High Trend
+SQL
+
+SELECT
+    COUNT(*) AS total,
+    ROUND(
+        SUM(CASE WHEN s.status='WIN' THEN 1 ELSE 0 END)*100.0
+        / COUNT(*), 2
+    ) AS winrate_percent
+FROM signal_features sf
+JOIN signals s ON s.id = sf.signal_id
+WHERE s.status IN ('WIN','LOSS')
+AND sf.mtf_score > 0.6
+AND sf.trend_score > 2;
+✅ 5.2 Score vs Regime
+SQL
+
+SELECT
+    s.regime,
+    ROUND(AVG(sf.total_score), 2) AS avg_score,
+    ROUND(AVG(s.result_percent), 2) AS avg_return
+FROM signal_features sf
+JOIN signals s ON s.id = sf.signal_id
+WHERE s.status IN ('WIN','LOSS')
+GROUP BY s.regime;
+
+Có cần bổ sung gì nữa không?
+Có 2 thứ cực kỳ quan trọng mình đề xuất thêm:
+
+✅ A) Expectancy theo component
+SQL
+
+SELECT
+    ROUND(AVG(s.result_percent), 3) AS expectancy
+FROM signals s
+WHERE s.status IN ('WIN','LOSS');
+✅ B) R-Multiple analysis
+Nếu bạn lưu rr:
+
+SQL
+
+SELECT
+    ROUND(AVG(sf.rr), 2) AS avg_rr
+FROM signal_features sf;
+
+Câu hỏi tiếp theo nên kiểm tra
+Chạy thêm SQL này:
+
+SQL
+
+SELECT
+    ROUND(AVG(total_score), 2),
+    ROUND(AVG(CASE WHEN status='WIN' THEN total_score END), 2) AS avg_win_score,
+    ROUND(AVG(CASE WHEN status='LOSS' THEN total_score END), 2) AS avg_loss_score
+FROM signal_features sf
+JOIN signals s ON s.id = sf.signal_id
+WHERE s.status IN ('WIN','LOSS');
+Nếu:
+
+text
+
+avg_win_score > avg_loss_score
+→ Score có predictive power.
+

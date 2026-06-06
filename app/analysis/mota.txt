@@ -1,0 +1,41 @@
+﻿============================ FT1 ========================================
+Phần 1 — Correlation
+Tính tương quan tuyến tính giữa từng feature và result_percent.
+
+→ Cho bạn biết feature nào có edge thô.
+
+Phần 2 — Logistic Regression
+Train model dự đoán WIN/LOSS.
+
+→ Coefficient cho biết:
+
+Giá trị dương → feature giúp tăng xác suất win
+Giá trị âm → feature làm giảm xác suất win
+Magnitude lớn → ảnh hưởng mạnh
+
+ Nghĩa là:
+
+MTF rất mạnh ✅
+Penalty rất quan trọng ✅
+Volume yếu ❌
+
+Sau khi chạy xong
+Bạn sẽ biết:
+
+Có nên tăng weight MTF không
+Có nên giảm weight volume không
+Có nên bỏ pattern không
+Penalty có đang quá mạnh không
+
+============================ FT2 ========================================
+✅ Random Forest importance (phi tuyến)
+✅ SHAP analysis (giải thích mô hình)
+✅ Auto weight optimizer dựa trên coefficient
+
+Sau khi chạy script, gửi mình:
+
+RandomForest ranking
+Logistic coefficient ranking
+Mình sẽ giúp bạn điều chỉnh weight tối ưu cho timeframe.
+
+Bạn muốn mình viết thêm phiên bản auto-update WEIGHTS từ kết quả ML không?
