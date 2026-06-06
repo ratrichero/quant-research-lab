@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request,Query
 from fastapi.responses import HTMLResponse
 from app.db.session import SessionLocal
 from app.db.models import Signal
@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from jinja2 import Environment, FileSystemLoader
 import os, json
 from app.services.binance_service import get_all_prices
+from sqlalchemy import desc, asc
 
 router = APIRouter()
 
@@ -19,6 +20,49 @@ env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
 
 from fastapi.responses import JSONResponse
 
+@router.post("/close-all")
+def close_all_positions():
+
+    db = SessionLocal()
+
+    try:
+        open_trades = db.query(Signal).filter(
+            Signal.status == "OPEN"
+        ).all()
+
+        if not open_trades:
+            return {"status": "no_open_trades"}
+
+        price_map = get_all_prices()
+
+        from app.services.trade_close_service import close_trade
+
+        closed_count = 0
+
+        for trade in open_trades:
+
+            current_price = price_map.get(trade.symbol)
+
+            if not current_price:
+                continue
+
+            close_trade(db, trade, current_price, "MANUAL_ALL")
+            closed_count += 1
+
+        db.commit()
+
+        return {
+            "status": "success",
+            "closed": closed_count
+        }
+
+    except Exception as e:
+        db.rollback()
+        return {"status": "error", "message": str(e)}
+
+    finally:
+        db.close()
+        
 @router.get("/api/open-positions")
 def get_open_positions():
 
@@ -50,6 +94,7 @@ def get_open_positions():
             "direction": t.direction,
             "entry": round(entry,4),
             "current": round(current,4),
+            "timeframe": t.timeframe,
             "stop_loss": float(t.stop_loss) if t.stop_loss else None,
             "take_profit": float(t.take_profit) if t.take_profit else None,
             "regime": t.regime,
@@ -61,8 +106,93 @@ def get_open_positions():
 
     return results
 
+from fastapi import Query
+from sqlalchemy import desc, asc, func
+
+# Nếu sau này >100k record thì nâng cấp bảng nhằm query nhanh
+# CREATE INDEX idx_signal_status_exit_time ON signals(status, exit_time DESC);
+@router.get("/api/recent-closed")
+def api_recent_closed(
+    page: int = Query(1, ge=1),
+    sort: str = "exit_time",
+    order: str = "desc"
+):
+    db = SessionLocal()
+
+    PER_PAGE = 10
+
+    try:
+        # ✅ Map cột được phép sort (anti SQL injection)
+        sort_map = {
+            "symbol": Signal.symbol,
+            "pattern": Signal.pattern,
+            "result_percent": Signal.result_percent,
+            "exit_time": Signal.exit_time,
+            "score": Signal.score,
+            "timeframe": Signal.timeframe,
+            "created_at": Signal.created_at,
+            "direction": Signal.direction,   # ✅ thêm
+            "status": Signal.status,         # ✅ thêm
+            "regime": Signal.regime,         # ✅ thêm
+        }
+
+        sort_column = sort_map.get(sort, Signal.exit_time)
+        sort_column = desc(sort_column) if order == "desc" else asc(sort_column)
+
+        # ✅ Base query
+        base_query = db.query(Signal).filter(
+            Signal.status.in_(["WIN", "LOSS"])
+        )
+
+        # ✅ Count tổng số record (không load toàn bộ)
+        total = base_query.with_entities(func.count()).scalar()
+
+        # ✅ Server-side pagination thật sự
+        rows = (
+            base_query
+            .order_by(sort_column)
+            .offset((page - 1) * PER_PAGE)
+            .limit(PER_PAGE)
+            .all()
+        )
+
+        results = []
+        for t in rows:
+            results.append({
+                "id": t.id,
+                "symbol": t.symbol,
+                "pattern": t.pattern,
+                "direction": t.direction,
+                "timeframe": t.timeframe,
+                "entry": float(t.entry_price) if t.entry_price else None,
+                "exit": float(t.exit_price) if t.exit_price else None,
+                "stop_loss": float(t.stop_loss) if t.stop_loss else None,
+                "take_profit": float(t.take_profit) if t.take_profit else None,
+                "result": round(float(t.result_percent), 2) if t.result_percent else 0,
+                "status": t.status,
+                "regime": t.regime,
+                "score": round(float(t.score), 2) if t.score else 0,
+                "created_at": (
+                    (t.created_at + timedelta(hours=7)).strftime('%Y-%m-%d %H:%M')
+                    if t.created_at else None
+                ),
+                "exit_time": (
+                    (t.exit_time + timedelta(hours=7)).strftime('%Y-%m-%d %H:%M')
+                    if t.exit_time else None
+                )
+            })
+
+        return {
+            "data": results,
+            "total_pages": (total + PER_PAGE - 1) // PER_PAGE,
+            "page": page
+        }
+
+    finally:
+        db.close()
+
 @router.get("/dashboard", response_class=HTMLResponse)
-def dashboard(request: Request):
+def dashboard(request: Request, page: int = 1):
 
     cfg = get_runtime_config()
 
@@ -80,9 +210,21 @@ def dashboard(request: Request):
         db.query(Signal)
         .filter(Signal.status.in_(["WIN", "LOSS"]))
         .order_by(Signal.exit_time.desc())   # sắp xếp theo giờ đóng mới nhất
-        .limit(10)
+        .limit(50)
         .all()
+        
     )
+
+    PER_PAGE = 10
+    total_recent = len(recent_closed)
+
+    start = (page - 1) * PER_PAGE
+    end = start + PER_PAGE
+
+    recent_page = recent_closed[start:end]
+
+    total_pages = (total_recent + PER_PAGE - 1) // PER_PAGE
+
     db.close()
     # ================= PERFORMANCE =================
     if not closed_trades:
@@ -177,6 +319,7 @@ def dashboard(request: Request):
             "symbol": t.symbol,
             "pattern": t.pattern,
             "direction": t.direction,
+            "timeframe": t.timeframe,
             "entry": round(entry,4),
             "current": round(current,4),
             "pnl": round(pnl,2),
@@ -230,10 +373,13 @@ def dashboard(request: Request):
         monthly_stats=monthly_stats,
         risk_alert=risk_alert,
         open_positions=open_positions,
-        recent_closed=recent_closed,
+        #recent_closed=recent_closed,
         pattern_stats=pattern_stats,
         regime_stats=regime_stats,
-        config=cfg
+        config=cfg,
+        recent_closed=recent_page,
+        page=page,
+        total_pages=total_pages,
     )
 
     return HTMLResponse(html)

@@ -3,6 +3,7 @@
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta charset="UTF-8">
+  <link rel="icon" href="data:,">
   <title>Quant Control Panel</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
@@ -107,7 +108,21 @@
     .current-highlight {
       font-weight: bold;
       font-size: 0.9rem;
-}
+    }
+ 
+    .sortable {
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .sortable:hover {
+      color: #64b5f6;
+    }
+
+    .sort-icon {
+      font-size: 0.7rem;
+      margin-left: 4px;
+    }
 
     /* ── Config result ── */
     #config-result { color: #4caf50; font-size: 0.9rem; }
@@ -232,7 +247,14 @@
        OPEN POSITIONS
   ═══════════════════════════════════════════ -->
   <div class="section">
-    <h3 class="section-title">📌 Open Positions</h3>
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <h3 class="section-title" style="margin:0;">📌 Open Positions</h3>
+
+      <button onclick="closeAllPositions()"
+          style="background:#ff5252;padding:6px 14px;font-size:0.8rem;">
+          ❌ Close All
+      </button>
+    </div>
     <div class="table-wrapper">
       <table style="min-width:800px;">
         <thead>
@@ -241,6 +263,7 @@
             <th style="text-align:left;">Symbol</th>
             <th style="text-align:left;">Pattern</th>
             <th>Dir</th>
+            <th>TF</th>
             <th>Entry</th>
             <th>Current</th>
             <th>Stop Loss</th>
@@ -266,6 +289,7 @@
                 {{ row.direction }}
               </span>
             </td>
+            <td class="center"><span style="color:#e5ff00;font-weight:bold;">{{ row.timeframe }}</span></td>
             <td class="center" style="color:#ccc;">{{ row.entry }}</td>
             <td class="center" style="color:#fff;">{{ row.current }}</td>
             <td class="center" style="color:#ff7043;">{{ row.stop_loss }}</td>
@@ -298,12 +322,13 @@
     <h3 class="section-title">🕐 Recent Closed Positions <span style="font-size:0.8rem;color:#666;font-weight:normal;">(10 lệnh đóng gần nhất)</span></h3>
     <div class="table-wrapper">
       <table style="min-width:1000px;">
-        <thead>
+        <!--thead>
           <tr>
             <th>#</th>
             <th style="text-align:left;">Symbol</th>
             <th style="text-align:left;">Pattern</th>
             <th>Dir</th>
+            <th>TF</th>
             <th>Entry</th>
             <th>Exit</th>
             <th>Stop Loss</th>
@@ -315,8 +340,27 @@
             <th>Opened At</th>
             <th>Closed At</th>
           </tr>
+        </thead-->
+        <thead>
+          <tr>
+            <th>#</th>
+            <th onclick="sortRecent('symbol')" class="sortable">Symbol<span id="icon-symbol"></span></th>
+            <th onclick="sortRecent('pattern')" class="sortable">Pattern<span id="icon-pattern"></span></th>
+            <th onclick="sortRecent('direction')" class="sortable">Dir<span id="icon-dir"></span></th>
+            <th onclick="sortRecent('timeframe')" class="sortable">TF<span id="icon-timeframe"></span></th>
+            <th>Entry</th>
+            <th>Exit</th>
+            <th>Stop Loss</th>
+            <th>Take Profit</th>
+            <th onclick="sortRecent('result_percent')" class="sortable">PnLPnL %<span id="icon-result_percent"></span></th>
+            <th onclick="sortRecent('status')" class="sortable">Status<span id="icon-status"></span></th>
+            <th onclick="sortRecent('regime')" class="sortable">Regime<span id="icon-regime"></span></th>
+            <th onclick="sortRecent('score')" class="sortable">Score <span id="icon-score"></span></th>
+            <th onclick="sortRecent('open_time')" class="sortable">Opened At<span id="icon-open_time"></span></th>
+            <th onclick="sortRecent('exit_time')" class="sortable">Closed<span id="icon-exit_time"></span></th>
+          </tr>
         </thead>
-        <tbody>
+        <tbody id="recent-table-body">
           {% if not recent_closed %}
           <tr><td colspan="14" class="center" style="color:#888;padding:20px;">Chưa có lệnh đóng</td></tr>
           {% endif %}
@@ -330,6 +374,7 @@
                 {{ row.direction }}
               </span>
             </td>
+            <td class="center"><span style="color:#eeff00;font-weight:bold;">{{ row.timeframe }}</span></td>
             <!--td class="center" style="color:#ccc;">{{ row.entry_price }}</td>
             <td class="center" style="color:#ccc;">{{ row.exit_price }}</td>
             <td class="center" style="color:#ff7043;">{{ row.stop_loss }}</td>
@@ -368,8 +413,10 @@
           {% endfor %}
         </tbody>
       </table>
+      <div id="recent-pagination" style="text-align:center;margin-top:15px;"></div>
     </div>
   </div>
+  
 
   <!-- ═══════════════════════════════════════════
        PATTERN BREAKDOWN
@@ -611,82 +658,84 @@
 
     let previousPrices = {};
 
-async function refreshOpenPositions() 
-  {
-    const res = await fetch("/api/open-positions");
-    const data = await res.json();
-    
-    const tbody = document.getElementById("open-table-body");
-    tbody.innerHTML = "";
+  async function refreshOpenPositions() 
+    {
+      const res = await fetch("/api/open-positions");
+      const data = await res.json();
+      
+      const tbody = document.getElementById("open-table-body");
+      tbody.innerHTML = "";
 
-    if (data.length === 0) {
-        tbody.innerHTML = `
-        <tr>
-            <td colspan="11" class="center" style="color:#888;padding:20px;">
-            Không có lệnh đang mở
-            </td>
-        </tr>`;
-        return;
-    }
+      if (data.length === 0) {
+          tbody.innerHTML = `
+          <tr>
+              <td colspan="11" class="center" style="color:#888;padding:20px;">
+              Không có lệnh đang mở
+              </td>
+          </tr>`;
+          return;
+      }
 
-    data.forEach((row, index) => {
-    const entry = parseFloat(row.entry); // Lấy giá trị entry để làm chuẩn
-    tbody.innerHTML += `
-        <tr>
-            <td class="center">${index+1}</td>
+      data.forEach((row, index) => {
+      const entry = parseFloat(row.entry); // Lấy giá trị entry để làm chuẩn
+      tbody.innerHTML += `
+          <tr>
+              <td class="center">${index+1}</td>
 
-            <td class="left">
-                <b style="color:#fff;">${row.symbol}</b>
-            </td>
+              <td class="left">
+                  <b style="color:#fff;">${row.symbol}</b>
+              </td>
 
-            <td class="left">${row.pattern ?? "-"}</td>
+              <td class="left">${row.pattern ?? "-"}</td>
 
-            <td class="center">
-                <span class="badge ${row.direction === 'LONG' ? 'badge-long' : 'badge-short'}">
-                    ${row.direction}
-                </span>
-            </td>
+              <td class="center">
+                  <span class="badge ${row.direction === 'LONG' ? 'badge-long' : 'badge-short'}">
+                      ${row.direction}
+                  </span>
+              </td>
 
-            <!-- ✅ Entry KHÔNG được mất -->
-            <td class="center">${row.entry}</td>
+              <td class="center" style="color:#e5ff00;font-weight:bold;">${row.timeframe ?? "-"}</td>
 
-            <!-- ✅ Current -->
-            <td class="center current-cell current-highlight"
-                data-symbol="${row.symbol}"
-                data-tp="${row.take_profit}"
-                data-sl="${row.stop_loss}">
-                ${row.current}
-            </td>
+              <!-- ✅ Entry KHÔNG được mất -->
+              <td class="center">${row.entry}</td>
 
-            <td class="center" style="color:#ff7043;">${formatByEntry(row.stop_loss, entry)}</td>
-            <td class="center" style="color:#66bb6a;">${formatByEntry(row.take_profit, entry)}</td>
+              <!-- ✅ Current -->
+              <td class="center current-cell current-highlight"
+                  data-symbol="${row.symbol}"
+                  data-tp="${row.take_profit}"
+                  data-sl="${row.stop_loss}">
+                  ${row.current}
+              </td>
 
-            <!-- ✅ PnL -->
-            <td class="center">
-                <b style="color:${row.color}">
-                    ${row.pnl >= 0 ? '+' : ''}${row.pnl}%
-                </b>
-            </td>
+              <td class="center" style="color:#ff7043;">${formatByEntry(row.stop_loss, entry)}</td>
+              <td class="center" style="color:#66bb6a;">${formatByEntry(row.take_profit, entry)}</td>
 
-            <td class="center">
-                <span class="badge-regime">
-                    ${row.regime ?? "-"}
-                </span>
-            </td>
+              <!-- ✅ PnL -->
+              <td class="center">
+                  <b style="color:${row.color}">
+                      ${row.pnl >= 0 ? '+' : ''}${row.pnl}%
+                  </b>
+              </td>
 
-            <td class="center" style="color:#ffb74d;">
-                ${row.score ?? "-"}
-            </td>
-            <td class="center" style="color:#777;font-size:0.78rem;">${row.created_at ?? "-"}</td>
-            <td class="center">
-                <button onclick="manualClose(${row.id})"
-                    style="background:#ff5252;padding:4px 10px;font-size:0.75rem;">
-                    Close
-                </button>
-            </td>
-        </tr>
-    `;
-});
+              <td class="center">
+                  <span class="badge-regime">
+                      ${row.regime ?? "-"}
+                  </span>
+              </td>
+
+              <td class="center" style="color:#ffb74d;">
+                  ${row.score ?? "-"}
+              </td>
+              <td class="center" style="color:#777;font-size:0.78rem;">${row.created_at ?? "-"}</td>
+              <td class="center">
+                  <button onclick="manualClose(${row.id})"
+                      style="background:#ff5252;padding:4px 10px;font-size:0.75rem;">
+                      Close
+                  </button>
+              </td>
+          </tr>
+      `;
+  });
 // So sánh giá cũ và mới
         document.querySelectorAll(".current-cell").forEach(cell => {
 
@@ -792,7 +841,7 @@ async function refreshOpenPositions()
 /**
  * Format số theo số chữ số thập phân của entry, tối thiểu 2, tối đa 8
  */
-function formatByEntry(value, entry) {
+  function formatByEntry(value, entry) {
     if (value === null || value === undefined) return "-";
     
     // Lấy số chữ số thập phân của entry
@@ -801,23 +850,252 @@ function formatByEntry(value, entry) {
     return parseFloat(value).toFixed(decimalPlaces);
 }
 
+/** * Ajax phân trang */
+
+  let currentPage = 1;
+  let currentSort = "exit_time";
+  let currentOrder = "desc";
+  let totalPages = 1;
+
+  async function loadRecent(page = 1, sort = currentSort, order = currentOrder) {
+
+    try {
+
+        currentPage = page;
+        currentSort = sort;
+        currentOrder = order;
+
+        const res = await fetch(
+            `/api/recent-closed?page=${page}&sort=${sort}&order=${order}`
+        );
+
+        const json = await res.json();
+
+        if (!json || !json.data) {
+            console.error("Invalid API response:", json);
+            return;
+        }
+
+        totalPages = json.total_pages || 1;
+
+        const tbody = document.getElementById("recent-table-body");
+        tbody.innerHTML = "";
+
+        if (json.data.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="15" class="center">No data</td>
+                </tr>`;
+            return;
+        }
+
+        json.data.forEach((row, index) => {
+
+        tbody.innerHTML += `
+        <tr>
+          <td class="center">${(page-1)*10 + index + 1}</td>
+
+          <td class="left"><b style="color:#fff;">${row.symbol}</b></td>
+
+          <td class="left">${row.pattern ?? "-"}</td>
+
+          <td class="center"><span class="badge ${row.direction === 'LONG' ? 'badge-long' : 'badge-short'}">${row.direction}</span></td>
+
+          <td class="center" style="color:#eeff00;font-weight:bold;">${row.timeframe ?? "-"}</td>
+            
+          <td class="center" style="color:#ccc;">${row.entry ? formatByEntry(row.entry, row.entry) : "-"}</td>
+
+          <td class="center" style="color:#ccc;">${row.exit ? formatByEntry(row.exit, row.entry) : "-"}          </td>
+
+          <td class="center" style="color:#ff7043;">${row.stop_loss ? formatByEntry(row.stop_loss, row.entry) : "-"}          </td>
+
+          <td class="center" style="color:#66bb6a;">${row.take_profit ? formatByEntry(row.take_profit, row.entry) : "-"}          </td>
+          
+
+          <td class="center">  <b style="color:${row.result >= 0 ? '#4caf50' : '#ff5252'};">      ${row.result >= 0 ? '+' : ''}${row.result}%  </b></td>
+
+
+            <!-- ✅ STATUS -->
+            <td class="center">
+                <span class="badge ${row.status === 'WIN' ? 'badge-win' : 'badge-loss'}">
+                    ${row.status}
+                </span>
+            </td>
+
+            <!-- ✅ REGIME -->
+            <td class="center">
+                <span class="badge-regime">
+                    ${row.regime ?? "-"}
+                </span>
+            </td>
+
+            <!-- ✅ SCORE -->
+            <td class="center" style="color:#ffb74d;">
+                ${row.score ?? "-"}
+            </td>
+
+            <!-- ✅ OPENED AT -->
+            <td class="center" style="color:#777;font-size:0.78rem;">
+                ${row.created_at ?? "-"}
+            </td>
+
+            <!-- ✅ CLOSED AT -->
+            <td class="center" style="color:#777;font-size:0.78rem;">
+                ${row.exit_time ?? "-"}
+            </td>
+        </tr>
+        `;
+    });
+
+        renderPagination();
+        updateSortIcons();
+
+    } catch (err) {
+        console.error("Load recent error:", err);
+    }
+}
+ 
+  function sortRecent(column) {
+
+    if (currentSort === column) {
+        currentOrder = currentOrder === "asc" ? "desc" : "asc";
+    } else {
+        currentSort = column;
+        currentOrder = "desc";
+    }
+
+    loadRecent(1, currentSort, currentOrder);
+  }
+
+  function updateSortIcons() {
+
+    const columns = [
+        "symbol",
+        "pattern",
+        "dir",
+        "timeframe",
+        "result_percent",
+        "status",
+        "regime",
+        "score",
+        "exit_time",
+        "open_time"
+    ];
+
+    columns.forEach(col => {
+        const el = document.getElementById(`icon-${col}`);
+        if (!el) return;
+
+        if (col === currentSort) {
+            el.innerHTML = currentOrder === "asc" ? "▲" : "▼";
+        } else {
+            el.innerHTML = "";
+        }
+    });
+  }
+
+  function renderPagination() {
+
+    const el = document.getElementById("recent-pagination");
+    el.innerHTML = "";
+
+    if (totalPages <= 1) return;
+
+    // Prev
+    if (currentPage > 1) {
+        el.innerHTML += `
+            <button onclick="loadRecent(${currentPage-1})">
+                ⬅
+            </button>
+        `;
+    }
+
+    // Page numbers
+    for (let i = 1; i <= totalPages; i++) {
+
+        el.innerHTML += `
+            <button onclick="loadRecent(${i})"
+                style="
+                    margin:0 4px;
+                    background:${i===currentPage?'#64b5f6':'#222'};
+                    color:${i===currentPage?'#fff':'#ccc'};
+                ">
+                ${i}
+            </button>
+        `;
+    }
+
+    // Next
+    if (currentPage < totalPages) {
+        el.innerHTML += `
+            <button onclick="loadRecent(${currentPage+1})">
+                ➡
+            </button>
+        `;
+    }
+}
+
+async function closeAllPositions() {
+
+    if (!confirm("Đóng tất cả lệnh đang mở?")) return;
+
+    const btns = document.querySelectorAll("button");
+    btns.forEach(b => b.disabled = true);
+
+    try {
+
+        const res = await fetch("/close-all", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" }
+        });
+
+        const data = await res.json();
+
+        if (data.status === "success") {
+
+            alert(`✅ Đã đóng ${data.closed} lệnh`);
+
+            refreshOpenPositions();
+            loadRecent(currentPage);
+
+        } else if (data.status === "no_open_trades") {
+
+            alert("Không có lệnh nào đang mở");
+
+        } else {
+
+            alert("Lỗi khi đóng lệnh");
+        }
+
+    } catch (err) {
+        console.error(err);
+        alert("Server error");
+    }
+
+    btns.forEach(b => b.disabled = false);
+}
+
 </script>
 
 <script>
-document.addEventListener("DOMContentLoaded", function() {
-    document.querySelectorAll(".price-cell").forEach(cell => {
-        const entryRaw = cell.getAttribute("data-entry");
-        const valRaw = cell.getAttribute("data-val");
-        
-        if (entryRaw && valRaw && valRaw !== "None") {
-            const entry = parseFloat(entryRaw);
-            const val = parseFloat(valRaw);
-            
-            // Sử dụng hàm formatByEntry chúng ta đã tạo ở bước trước
-            cell.innerText = formatByEntry(val, entry);
-        }
-    });
-});
+  document.addEventListener("DOMContentLoaded", function() {
+    loadRecent();
+  });
+
+  document.addEventListener("DOMContentLoaded", function() {
+      document.querySelectorAll(".price-cell").forEach(cell => {
+          const entryRaw = cell.getAttribute("data-entry");
+          const valRaw = cell.getAttribute("data-val");
+          
+          if (entryRaw && valRaw && valRaw !== "None") {
+              const entry = parseFloat(entryRaw);
+              const val = parseFloat(valRaw);
+              
+              // Sử dụng hàm formatByEntry chúng ta đã tạo ở bước trước
+              cell.innerText = formatByEntry(val, entry);
+          }
+      });
+  });
 </script>
 
 </body>
