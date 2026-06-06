@@ -51,8 +51,14 @@ class MTFCalculator:
                 return (50 - rsi) / 20
             elif 15 <= rsi < 30:
                 return max(0.0, 1 - (30 - rsi) / 15)
-            else:
-                return 0.0
+            elif rsi > 50:
+            # ✅ FIX: RSI > 50 nhưng SHORT vẫn có partial score
+            # RSI=55 → 0.0, RSI=70 → -0.25 (không dùng)
+            # Thêm soft zone 50-60: score nhỏ dần
+                if rsi <= 60:
+                    return max(0.0, (60 - rsi) / 40)  # 0.25 → 0.0
+            return 0.0
+            
 
     # ─────────────────────────────────────────────
     # ATR-normalized Distance with Guard
@@ -73,14 +79,21 @@ class MTFCalculator:
 
             if distance_atr <= 0:
                 # Soft suppression for against-trend
-                return max(0.0, 0.1 + distance_atr / 6.0)
+                return max(0.1, 0.2 + distance_atr / 6.0)
+                # qua khắc nghiệt, mtf thường bằng 0
+                #return max(0.0, 0.1 + distance_atr / 6.0)
 
             return min(1.0, distance_atr / 3.0)
 
         else:
 
             if distance_atr >= 0:
-                return max(0.0, 0.1 - distance_atr / 6.0)
+                # ✅ FIX: close > ema200 tức là ĐANG trên trend
+                # SHORT vẫn hợp lệ nếu vừa break xuống
+                # Tăng soft floor từ 0.0 → 0.05
+                val = 0.1 - distance_atr / 6.0
+                return max(0.05, val)   # ← không về 0 cứng
+                #return max(0.0, 0.1 - distance_atr / 6.0)
 
             return min(1.0, -distance_atr / 3.0)
 
@@ -104,9 +117,15 @@ class MTFCalculator:
         rsi_t = cls._safe(trend_last, "rsi")
         atr_t = cls._safe(trend_last, "atr")
 
+        """print(
+            f"[MTF DEBUG] direction={direction} | "
+            f"ATR={atr_t} | Close={close_t} | "
+            f"ATR/Close={(atr_t/close_t) if (atr_t and close_t) else None}"
+        )"""
+
         if close_t is None or ema200_t is None:
             return 0.0
-
+        
         # ───────── Trend Layer ─────────
 
         distance_component = cls._atr_distance(
@@ -125,6 +144,13 @@ class MTFCalculator:
                 structure_component = min(1.0, -ema_gap * 50)
 
         rsi_component = cls._rsi_trend_score(rsi_t, direction)
+
+        """print(
+            f"[MTF TREND DEBUG] direction={direction} | "
+            f"distance_component={distance_component:.4f} | "
+            f"struct={structure_component:.4f} | "
+            f"rsi={rsi_component:.4f}"
+        )"""
 
         trend_layer = (
             0.5 * distance_component +
@@ -181,4 +207,5 @@ class MTFCalculator:
         else:
             mtf_score = trend_layer
 
+        
         return round(max(0.0, min(1.0, mtf_score)), 4)

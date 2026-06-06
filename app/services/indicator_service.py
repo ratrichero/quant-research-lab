@@ -19,11 +19,13 @@ class _TechnicalIndicatorsEngine:
             'regime_threshold': 0.001
         }
         self.config = {**default_config, **(config or {})}
-    
-    def calculate_ema(self, df: pd.DataFrame) -> pd.Series:
-        """EMA calculation"""
-        period = self.config['ema_period']
-        return df['close'].ewm(span=period, adjust=False, min_periods=period).mean()
+        
+    def calculate_ema(self, series: pd.Series, period: int) -> pd.Series:
+        """
+        ✅ FIX: nhận series + period trực tiếp
+        ✅ FIX: bỏ min_periods=period → không còn NaN với 199 rows
+        """
+        return series.ewm(span=period, adjust=False).mean()
     
     def calculate_rsi(self, df: pd.DataFrame) -> pd.Series:
         """RSI calculation - improved version"""
@@ -193,7 +195,11 @@ def add_indicators_advanced(
     })
     
     result = df.copy()
-    result[f"ema{ema_period}"] = engine.calculate_ema(result)
+    result["ema50"]= engine.calculate_ema(result["close"], period=50)
+    result[f"ema{ema_period}"] = engine.calculate_ema(result["close"], period=ema_period)
+    #result[f"ema{ema_period}"] = engine.calculate_ema(result)
+    if ema_period != 200:
+        result["ema200"] = engine.calculate_ema(result["close"], period=200)
     result["rsi"] = engine.calculate_rsi(result)
     result["atr"] = engine.calculate_atr(result)
     result["vol_ma"] = engine.calculate_volume_ma(result)
@@ -205,10 +211,15 @@ def add_indicators_advanced(
     result["bb_upper"] = mid + 2 * std
     result["bb_lower"] = mid - 2 * std
 
+    #result["bb_position"] = (
+#        (result["close"] - result["bb_lower"]) /
+ #       (result["bb_upper"] - result["bb_lower"])
+  #  )
+
     result["bb_position"] = (
         (result["close"] - result["bb_lower"]) /
         (result["bb_upper"] - result["bb_lower"])
-    )
+    ).clip(0, 1)  # ✅ clamp [0,1]
     
     return result
 
@@ -238,12 +249,20 @@ def detect_regime_advanced(
         >>> # Strict regime detection
         >>> regime = detect_regime_advanced(df, method='hybrid', threshold=0.005)
     """
-    if len(df) < 210:
+    # ✅ FIX: relaxed min length (bỏ 210 → 50)
+    #if len(df) < 210:
+    if len(df) < 50:
         return "SIDEWAYS"
     
     if "ema200" not in df.columns:
         return "SIDEWAYS"
     
+    # ✅ FIX: skip NaN ema200 - bo sung them
+    ema_series = df["ema200"].dropna()
+    if len(ema_series) < 2:
+        return "SIDEWAYS"
+    
+
     if method == 'ema_slope':
         ema_now = df["ema200"].iloc[-1]
         ema_prev = df["ema200"].iloc[-lookback]

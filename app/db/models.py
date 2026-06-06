@@ -126,6 +126,7 @@ class ScanRun(Base):
     config_id = Column(Integer, ForeignKey("scan_config.id"))
 
     created_at = Column(DateTime, default=datetime.utcnow)
+    engine_metadata = Column(JSON, nullable=True)
 
 class ScanDebug(Base):
     __tablename__ = "scan_debug"
@@ -155,6 +156,4 @@ class ScanDebug(Base):
     candle_time = Column(DateTime)
 
     created_at = Column(DateTime, default=datetime.utcnow)
-    
-    engine_metadata = Column(JSON, nullable=True)
     rule_score_raw = Column(Float, nullable=True)

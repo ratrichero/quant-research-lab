@@ -297,7 +297,8 @@ def calculate_score(df, pattern, cfg, symbol, timeframe,trend_df=None, context_d
             trend_df=trend_df,
             context_df=context_df
         )
-
+    #print(f"[MTF FINAL] mtf_score={mtf_score:.6f}")
+    
     # ── Penalty Engine ───────────────────────────────
     body_ratio = body / full_range if full_range > 0 else 0
 
@@ -461,7 +462,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
 
     engine_metadata = {
     "engine_version": ENGINE_VERSION,
-    "mtf_version": 2,
+    "mtf_version": 2.1,
     "mtf_structure": "2-layer ATR normalized",
     "regime_mode": "penalty",
     "regime_penalty": 0.3,
@@ -547,7 +548,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                         if symbol not in trend_cache:
 
                             raw_trend = get_klines_closed(
-                                symbol, interval=trend_tf, limit=200
+                                symbol, interval=trend_tf, limit=250
                             )
 
                             if raw_trend is not None and len(raw_trend) >= 50:
@@ -562,7 +563,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                         if symbol not in context_cache:
 
                             raw_ctx = get_klines_closed(
-                                symbol, interval=context_tf, limit=200
+                                symbol, interval=context_tf, limit=250
                             )
 
                             if raw_ctx is not None and len(raw_ctx) >= 50:
@@ -821,6 +822,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
             except Exception as e:
                 db.rollback()
                 print(f"❌ Error {symbol}: {type(e).__name__} - {e}")
+        db.commit()
 
         time.sleep(BATCH_SLEEP)
 
