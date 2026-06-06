@@ -1,65 +1,36 @@
 import pandas as pd
 from app.db.session import SessionLocal
-from app.db.models import ScanDebug, Signal, TradeOutcomeAnalytics
+from app.db.models import SignalFeature, TradeOutcomeAnalytics
 
 
-def build_dataset(timeframe="15m", limit=None):
-    """
-    Build dataset từ scan_debug + signal + outcome
-    """
+def build_dataset():
 
     db = SessionLocal()
 
-    # ✅ JOIN FULL PIPELINE
-    query = (
-        db.query(ScanDebug, Signal, TradeOutcomeAnalytics)
-        .outerjoin(Signal, ScanDebug.signal_id == Signal.id)
-        .outerjoin(TradeOutcomeAnalytics, Signal.id == TradeOutcomeAnalytics.signal_id)
-        .order_by(ScanDebug.created_at.asc())
+    data = (
+        db.query(SignalFeature, TradeOutcomeAnalytics)
+        .join(TradeOutcomeAnalytics, SignalFeature.signal_id == TradeOutcomeAnalytics.signal_id)
+        .all()
     )
 
-    if limit:
-        query = query.limit(limit)
-
-    data = query.all()
     db.close()
 
     rows = []
 
-    for sd, sig, outcome in data:
-
-        # ✅ Feature
-        trend = float(sd.trend_score or 0)
-        momentum = float(sd.momentum_score or 0)
-        volume = float(sd.volume_score or 0)
-        pattern = float(sd.pattern_score or 0)
-        mtf = float(sd.mtf_score or 0)
-        penalty = float(sd.penalty or 0)
-        total = float(sd.total_score or 0)
-        ml_prob = float(sd.ml_prob) if sd.ml_prob is not None else 0
-
-        # ✅ Encode regime
-        regime = 1 if sd.regime == "BULL" else 0
-
-        # ✅ Label logic (QUAN TRỌNG)
-        if sig is None:
-            label = 0  # ❌ không trade = negative sample
-        elif outcome is None:
-            continue   # chưa có kết quả → bỏ
-        else:
-            label = 1 if outcome.label == 1 else 0
+    for f, o in data:
 
         rows.append({
-            "trend": trend,
-            "momentum": momentum,
-            "volume": volume,
-            "pattern": pattern,
-            "mtf": mtf,
-            "penalty": penalty,
-            "total": total,
-            "ml_prob": ml_prob,
-            "regime": regime,
-            "label": label
+            "trend": float(f.trend_score or 0),
+            "momentum": float(f.momentum_score or 0),
+            "volume": float(f.volume_score or 0),
+            "pattern": float(f.pattern_score or 0),
+            "mtf": float(f.mtf_score or 0),
+            "penalty": float(f.strict_penalty or 0),
+            "ema_distance": float(f.ema_distance or 0),
+            "atr_ratio": float(f.atr_ratio or 0),
+            "volume_ratio": float(f.volume_ratio or 0),
+            "regime": 1 if f.regime == "BULL" else 0,
+            "label": 1 if o.label == 1 else 0
         })
 
     df = pd.DataFrame(rows)

@@ -6,10 +6,8 @@ load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-
-
-
 BINANCE_BASE = "https://fapi.binance.com"
+ENGINE_VERSION = 3
 
 """
 TIMEFRAME = os.getenv("TIMEFRAME", "15m")

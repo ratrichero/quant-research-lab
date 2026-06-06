@@ -16,8 +16,54 @@ from app.ml.predict import predict_prob
 from app.ml.features import build_features_from_row
 from app.services.llm_router import generate_explanation
 from app.db.models import ScanConfig, ScanRun, ScanDebug
+from app.services.mtf_service import MTFCalculator
+from app.core.config import ENGINE_VERSION
 
+# ── Timeframe-based Weights dùng để tính score ───────────────────────────────
 
+WEIGHTS = {
+    "15m": {
+        "trend": 0.25,
+        "momentum": 0.25,
+        "volume": 0.10,
+        "pattern": 0.15,
+        "mtf": 0.25
+    },
+    "1h": {
+        "trend": 0.30,
+        "momentum": 0.20,
+        "volume": 0.10,
+        "pattern": 0.15,
+        "mtf": 0.25
+    },
+    "4h": {
+        "trend": 0.30,
+        "momentum": 0.15,
+        "volume": 0.10,
+        "pattern": 0.10,
+        "mtf": 0.35
+    }
+}
+
+MAX_COMPONENTS = {
+    "trend": 3,
+    "momentum": 2,
+    "volume": 2,
+    "pattern": 2
+}
+
+PENALTY_WEIGHTS = {
+    "body": 0.5,
+    "volume": 0.5,
+    "atr": 0.5,
+    "regime_mismatch": 0.3,
+    "regime_sideways": 0.1
+}
+
+def normalize_component(value, max_value):
+    if max_value <= 0:
+        return 0.0
+    return max(0.0, min(1.0, value / max_value))
 
 # ============================================================
 # TIMEZONE HELPER
@@ -63,7 +109,6 @@ def sanitize_value(v):
 
     return v
 
-
 def sanitize_row(row: dict):
     return {k: sanitize_value(v) for k, v in row.items()}
 
@@ -92,13 +137,6 @@ def color_score(score):
 #  HELPER
 # ============================================================
 
-def get_higher_timeframe(tf: str) -> str:
-    mapping = {
-        "15m": "1h",
-        "1h":  "4h",
-        "4h":  "1d"
-    }
-    return mapping.get(tf)
 
 def safe(v):
     import numpy as np
@@ -118,14 +156,13 @@ def safe(v):
 # ← CHANGED: nhận htf_df từ ngoài, bỏ get_klines bên trong
 # ============================================================
 
-def calculate_score(df, pattern, cfg, symbol, timeframe, htf_df=None):  # ← CHANGED: thêm htf_df
+def calculate_score(df, pattern, cfg, symbol, timeframe,trend_df=None, context_df=None,regime=None):
 
     # ✅ FIX: tránh crash khi thiếu dữ liệu
     if df is None or len(df) < 3:
         return 0, None, {}
     
     last = df.iloc[-1]
-    prev = df.iloc[-2]
 
     state = get_market_state(df)
 
@@ -145,30 +182,45 @@ def calculate_score(df, pattern, cfg, symbol, timeframe, htf_df=None):  # ← CH
     volume_score   = 0
     pattern_score  = 0
     mtf_score      = 0
-    strict_penalty = 0
+    
+    # ── Trend (continuous, ATR-normalized) ─────────────────────
 
-    # ── Trend ───────────────────────────────────────────────
     ema200 = last.get("ema200")
     ema50  = last.get("ema50")
+    atr    = last.get("atr")
+    close  = last.get("close")
 
-    if ema200 is not None and not pd.isna(ema200) and ema200 != 0:
-        distance     = (last["close"] - ema200) / ema200
-        abs_distance = abs(distance)
+    if (
+        ema200 is not None and not pd.isna(ema200) and ema200 != 0 and
+        atr is not None and not pd.isna(atr) and atr > 0 and
+        close is not None and not pd.isna(close)
+    ):
+
+        # 1️⃣ Distance component (max 2 points)
+        distance_atr = (close - ema200) / atr
 
         if direction == "LONG":
-            if last["close"] > ema200:
-                trend_score += 2
-            elif abs_distance < 0.02:
-                trend_score += 1
-            if ema50 is not None and ema200 is not None and ema50 > ema200:
-                trend_score += 1
+            distance_component = max(0.0, min(1.0, distance_atr / 2.0))
         else:
-            if last["close"] < ema200:
-                trend_score += 2
-            elif abs_distance < 0.02:
-                trend_score += 1
-            if ema50 is not None and ema200 is not None and ema50 < ema200:
-                trend_score += 1
+            distance_component = max(0.0, min(1.0, -distance_atr / 2.0))
+
+        trend_distance_score = 2 * distance_component
+
+        # 2️⃣ Structure component (max 1 point)
+        structure_component = 0.0
+
+        if ema50 is not None and not pd.isna(ema50):
+            ema_gap = (ema50 - ema200) / ema200
+
+            if direction == "LONG" and ema_gap > 0:
+                structure_component = min(1.0, ema_gap * 50)
+
+            elif direction == "SHORT" and ema_gap < 0:
+                structure_component = min(1.0, -ema_gap * 50)
+
+        trend_structure_score = 1 * structure_component
+
+        trend_score = trend_distance_score + trend_structure_score
 
     # ── Momentum ────────────────────────────────────────────
     rsi = last.get("rsi")
@@ -193,12 +245,18 @@ def calculate_score(df, pattern, cfg, symbol, timeframe, htf_df=None):  # ← CH
     # ── Volume ──────────────────────────────────────────────
     vol_ratio = None
 
-    if last.get("vol_ma") and last["vol_ma"] > 0:
-        vol_ratio = float(last["volume"]) / float(last["vol_ma"])
+    vol_ma = last.get("vol_ma")
 
-        if vol_ratio > 2:
+    if vol_ma is not None and not pd.isna(vol_ma) and vol_ma > 0:
+        vol_ratio = last["volume"] / vol_ma
+    else:
+        vol_ratio = None
+
+    # Volume scoring
+    if vol_ratio is not None:
+        if vol_ratio >= 2:
             volume_score += 2
-        elif vol_ratio > cfg["VOLUME_MULTIPLIER"]:
+        elif vol_ratio >= cfg["VOLUME_MULTIPLIER"]:
             volume_score += 1
 
     if state["high_volume"]:
@@ -231,84 +289,91 @@ def calculate_score(df, pattern, cfg, symbol, timeframe, htf_df=None):  # ← CH
             pattern_score += 0.5
 
     # ── MTF ─────────────────────────────────────────────────
-    # ← CHANGED: không còn gọi get_klines bên trong
-    # Dùng htf_df được truyền vào từ scan_timeframe
-    if cfg.get("MTF_ENABLED", False) and htf_df is not None:
-        
-        htf_last = None
-        htf_ema200 = None
-        htf_rsi = None
+    mtf_score = 0
 
-        if htf_df is not None and len(htf_df) >= 2:
-            htf_last = htf_df.iloc[-1]
+    if cfg.get("MTF_ENABLED", False):
+        mtf_score = MTFCalculator.compute_mtf_score(
+            direction=direction,
+            trend_df=trend_df,
+            context_df=context_df
+        )
 
-        if htf_last is not None:
-            htf_ema200 = htf_last.get("ema200")
-            htf_rsi = htf_last.get("rsi")
-
-        if htf_ema200 and htf_ema200 != 0:
-            htf_distance     = (htf_last["close"] - htf_ema200) / htf_ema200
-            abs_htf_distance = abs(htf_distance)
-
-            if direction == "LONG":
-                if htf_last["close"] > htf_ema200:
-                    mtf_score += 1
-                elif abs_htf_distance < 0.02:
-                    mtf_score += 0.5
-                if htf_rsi and htf_rsi > 50:
-                    mtf_score += 0.25
-            else:
-                if htf_last["close"] < htf_ema200:
-                    mtf_score += 1
-                elif abs_htf_distance < 0.02:
-                    mtf_score += 0.5
-                if htf_rsi and htf_rsi < 50:
-                    mtf_score += 0.25
-
-    # ── Soft Penalty ────────────────────────────────────────
+    # ── Penalty Engine ───────────────────────────────
     body_ratio = body / full_range if full_range > 0 else 0
 
+    atr = last.get("atr")
+    close = last.get("close")
+    if atr is not None and close is not None and not pd.isna(atr) and not pd.isna(close) and atr > 0 and close > 0:
+        atr_ratio = atr / close
+    else:
+        atr_ratio = 0
+
+    
+    total_penalty = 0.0
+
     if body_ratio < cfg["BODY_RATIO_THRESHOLD"]:
-        strict_penalty -= 0.5
+        total_penalty -= PENALTY_WEIGHTS["body"]
 
-    if vol_ratio is None or vol_ratio < cfg["VOLUME_MULTIPLIER"]:
-        strict_penalty -= 0.5
+    if vol_ratio is None:
+        total_penalty -= PENALTY_WEIGHTS["volume"]
 
-    atr_ratio = None
-    if last.get("atr") and last["close"] != 0:
-        atr_ratio = last["atr"] / last["close"]
+    elif vol_ratio < cfg["VOLUME_MULTIPLIER"]:
+        total_penalty -= PENALTY_WEIGHTS["volume"]
 
-    if atr_ratio is None or atr_ratio < cfg["ATR_RATIO_MIN"]:
-        strict_penalty -= 0.5
+    if atr_ratio < cfg["ATR_RATIO_MIN"]:
+        total_penalty -= PENALTY_WEIGHTS["atr"]
+
+    # Regime penalties
+    if regime == "BULL" and direction == "SHORT":
+        total_penalty -= PENALTY_WEIGHTS["regime_mismatch"]
+
+    elif regime == "BEAR" and direction == "LONG":
+        total_penalty -= PENALTY_WEIGHTS["regime_mismatch"]
+
+    elif regime == "SIDEWAYS":
+        total_penalty -= PENALTY_WEIGHTS["regime_sideways"]
+
+    MAX_TOTAL_PENALTY = sum(PENALTY_WEIGHTS.values())
+    penalty_norm = total_penalty / MAX_TOTAL_PENALTY if MAX_TOTAL_PENALTY > 0 else 0
+
+    # fallback nếu timeframe lạ
+    weights = WEIGHTS.get(timeframe, {
+        "trend": 0.30,
+        "momentum": 0.20,
+        "volume": 0.15,
+        "pattern": 0.20,
+        "mtf": 0.15
+    })
 
     # ── Normalize ───────────────────────────────────────────
-    trend_norm    = trend_score / 3
-    momentum_norm = momentum_score / 2
-    volume_norm   = volume_score / 2
-    pattern_norm  = pattern_score / 2
-    mtf_norm      = min(mtf_score / 1.75, 1)
-    penalty_norm  = strict_penalty / 1.5
+    trend_norm    = normalize_component(trend_score, MAX_COMPONENTS["trend"])
+    momentum_norm = normalize_component(momentum_score, MAX_COMPONENTS["momentum"])
+    volume_norm   = normalize_component(volume_score, MAX_COMPONENTS["volume"])
+    pattern_norm  = normalize_component(pattern_score, MAX_COMPONENTS["pattern"])
+    mtf_norm = mtf_score
 
     rule_score = (
-        0.30 * trend_norm +
-        0.20 * momentum_norm +
-        0.15 * volume_norm +
-        0.20 * pattern_norm +
-        0.15 * mtf_norm
-    ) + penalty_norm
+    weights["trend"]    * trend_norm +
+    weights["momentum"] * momentum_norm +
+    weights["volume"]   * volume_norm +
+    weights["pattern"]  * pattern_norm +
+    weights["mtf"]      * mtf_norm
+) + penalty_norm
 
     # ← CHANGED: clamp để tránh out of range
     final_score = round(max(0.0, min(10.0, (rule_score + 1) * 5)), 2)
 
     components = {
-        "trend_score":     trend_score,
-        "momentum_score":  momentum_score,
-        "volume_score":    volume_score,
-        "pattern_score":   pattern_score,
-        "mtf_score":       mtf_score,
-        "strict_penalty":  strict_penalty,
-        "rule_score_raw":  rule_score,
-        "rule_score_scaled": final_score
+        "trend_score": trend_score,
+        "momentum_score": momentum_score,
+        "volume_score": volume_score,
+        "pattern_score": pattern_score,
+        "mtf_score": mtf_score,
+        "total_penalty": total_penalty,
+        "penalty_norm": penalty_norm,
+        "rule_score_raw": rule_score,
+        "rule_score_scaled": final_score,
+        "weights_used": weights
     }
 
     return final_score, direction, components
@@ -325,13 +390,15 @@ def is_duplicate(db, symbol, timeframe, candle_time):
         Signal.candle_time == candle_time
     ).first() is not None
 
-
 def in_cooldown(db, symbol, timeframe, hours=4):
     cutoff = datetime.utcnow() - timedelta(hours=hours)
+
     return db.query(Signal).filter(
         Signal.symbol    == symbol,
         Signal.timeframe == timeframe,
-        Signal.created_at >= cutoff
+        Signal.status.in_(["WIN", "LOSS", "MANUAL"]),  # ✅ chỉ lệnh đã đóng
+        Signal.exit_time != None,                      # ✅ có exit_time
+        Signal.exit_time >= cutoff                     # ✅ tính từ lúc đóng
     ).first() is not None
 
 
@@ -392,9 +459,19 @@ def scan_timeframe(db, timeframe, runtime_cfg):
     db.commit()
     db.refresh(config)
 
+    engine_metadata = {
+    "engine_version": ENGINE_VERSION,
+    "mtf_version": 2,
+    "mtf_structure": "2-layer ATR normalized",
+    "regime_mode": "penalty",
+    "regime_penalty": 0.3,
+    "weight_profile": "default_v1",
+    "score_scaling": "linear_v1"
+    }
     scan_run = ScanRun(
         timeframe=timeframe,
-        config_id=config.id
+        config_id=config.id,
+        engine_metadata=engine_metadata
     )
     db.add(scan_run)
     db.commit()   # ✅ FIX CHÍNH Ở ĐÂY
@@ -422,10 +499,12 @@ def scan_timeframe(db, timeframe, runtime_cfg):
 
     print(f"\n🔄 ===== SCAN {timeframe} | Time: {get_hanoi_time()} =====")
 
-    # ── HTF: xác định higher_tf 1 lần cho cả scan ───────────
-    # ← CHANGED: higher_tf cố định, cache lazy sau pattern check
-    higher_tf = get_higher_timeframe(timeframe) if runtime_cfg.get("MTF_ENABLED") else None
-    htf_cache = {}  # key: symbol → df đã add_indicators
+    mtf_map = MTFCalculator.get_timeframe_map(timeframe)
+    trend_tf = mtf_map["trend"]
+    context_tf = mtf_map["context"]
+
+    trend_cache = {}
+    context_cache = {}
 
     for i in range(0, len(symbols), BATCH_SIZE):
         batch = symbols[i:i + BATCH_SIZE]
@@ -449,7 +528,6 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     volume_ma_period=20
                 )
                 last = df.iloc[-1]
-                prev = df.iloc[-2]
 
                 pattern = detect_pattern(df)
                 if not pattern:
@@ -458,20 +536,41 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                 scan_stats["pattern_detected"] += 1
 
                 # ================= MTF =================
-                htf_df = None
-                if higher_tf:
-                    if symbol not in htf_cache:
-                        raw_htf = get_klines_closed(symbol, interval=higher_tf, limit=200)
-                        if raw_htf is not None and not raw_htf.empty and len(raw_htf) >= 50:
-                            htf_cache[symbol] = add_indicators_advanced(raw_htf)
-                        else:
-                            htf_cache[symbol] = None
-                    htf_df = htf_cache[symbol]
 
-                # ================= SCORE =================
-                score, direction, components = calculate_score(
-                    df, pattern, runtime_cfg, symbol, timeframe, htf_df=htf_df
-                )
+                trend_df = None
+                context_df = None
+
+                if runtime_cfg.get("MTF_ENABLED"):
+
+                    # ---- TREND TF ----
+                    if trend_tf:
+                        if symbol not in trend_cache:
+
+                            raw_trend = get_klines_closed(
+                                symbol, interval=trend_tf, limit=200
+                            )
+
+                            if raw_trend is not None and len(raw_trend) >= 50:
+                                trend_cache[symbol] = add_indicators_advanced(raw_trend)
+                            else:
+                                trend_cache[symbol] = None
+
+                        trend_df = trend_cache[symbol]
+
+                    # ---- CONTEXT TF ----
+                    if context_tf:
+                        if symbol not in context_cache:
+
+                            raw_ctx = get_klines_closed(
+                                symbol, interval=context_tf, limit=200
+                            )
+
+                            if raw_ctx is not None and len(raw_ctx) >= 50:
+                                context_cache[symbol] = add_indicators_advanced(raw_ctx)
+                            else:
+                                context_cache[symbol] = None
+
+                        context_df = context_cache[symbol]
 
                 # ================= REGIME =================
                 regime = detect_regime_advanced(
@@ -480,6 +579,20 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     lookback=10,
                     threshold=0.002
                 )
+
+                # ================= SCORE =================
+                score, direction, components = calculate_score(
+                    df,
+                    pattern,
+                    runtime_cfg,
+                    symbol,
+                    timeframe,
+                    trend_df=trend_df,
+                    context_df=context_df,
+                    regime=regime
+                )
+
+                
 
                 # ================= CREATE DEBUG (DB) =================
                 debug = ScanDebug(
@@ -492,13 +605,14 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     volume_score=float(components.get("volume_score", 0)),
                     pattern_score=float(components.get("pattern_score", 0)),
                     mtf_score=float(components.get("mtf_score", 0)),
-                    penalty=float(components.get("strict_penalty", 0)),
+                    penalty=float(components.get("penalty_norm", 0)),
                     total_score=float(score),
                     passed_score=score >= SCORE_THRESHOLD,
                     block_reason=None,
                     regime=regime,
                     candle_time=last["time"].to_pydatetime(),
-                    ml_prob=None
+                    ml_prob=None,
+                    rule_score_raw=float(components.get("rule_score_raw", 0))
                 )
 
                 db.add(debug)
@@ -514,7 +628,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     "volume": components.get("volume_score"),
                     "pattern_score": components.get("pattern_score"),
                     "mtf": components.get("mtf_score"),
-                    "penalty": components.get("strict_penalty"),
+                    "penalty": components.get("penalty_norm"),
                     "total_score": score,
                     "passed_score": score >= SCORE_THRESHOLD,
                     "block_reason": None,
@@ -528,18 +642,6 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     debug.block_reason = "score_threshold"
                     debug_rows[-1]["block_reason"] = "score_threshold"
                     scan_stats["score_reject"] += 1
-                    continue
-
-                if regime == "BULL" and direction != "LONG":
-                    debug.block_reason = "regime_mismatch"
-                    debug_rows[-1]["block_reason"] = "regime_mismatch"
-                    scan_stats["regime_blocked"] += 1
-                    continue
-
-                if regime == "BEAR" and direction != "SHORT":
-                    debug.block_reason = "regime_mismatch"
-                    debug_rows[-1]["block_reason"] = "regime_mismatch"
-                    scan_stats["regime_blocked"] += 1
                     continue
 
                 # ── Open signal check ────────────────────────
@@ -671,7 +773,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     pattern_score=safe(components.get("pattern_score")),
                     mtf_score=safe(components.get("mtf_score")),
                     total_score=safe(score),
-                    strict_penalty=safe(components.get("strict_penalty")),
+                    strict_penalty=safe(components.get("penalty_norm")),
                     rr=safe(rr)
                 )
 

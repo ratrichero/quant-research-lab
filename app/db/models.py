@@ -1,6 +1,6 @@
 from sqlalchemy.sql import func
 from app.db.session import Base
-from sqlalchemy import Column, BigInteger, Numeric, Integer, String, ForeignKey, DateTime,Float,Boolean
+from sqlalchemy import Column, BigInteger, Numeric, Integer, String, ForeignKey, DateTime,Float,Boolean,JSON
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.db.session import Base
@@ -155,4 +155,6 @@ class ScanDebug(Base):
     candle_time = Column(DateTime)
 
     created_at = Column(DateTime, default=datetime.utcnow)
-
+    
+    engine_metadata = Column(JSON, nullable=True)
+    rule_score_raw = Column(Float, nullable=True)

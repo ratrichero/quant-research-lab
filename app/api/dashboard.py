@@ -162,18 +162,15 @@ def dashboard(request: Request):
 
     # Risk Guard
     MAX_DD_ALERT = 15
-    risk_alert = overall["max_drawdown_percent"] <= -MAX_DD_ALERT
+    risk_alert = abs(overall["max_drawdown_percent"]) >= MAX_DD_ALERT
 
     # Open Positions
+    price_map = get_all_prices()
     open_positions = []
     for t in open_trades:
-        try:
-            df_now = get_klines(t.symbol, limit=2)
-            current = float(df_now.iloc[-1]["close"])
-        except:
-            current = float(t.entry_price)
-
+       
         entry = float(t.entry_price)
+        current = float(price_map.get(t.symbol, entry))
         pnl = ((current-entry)/entry)*100 if t.direction=="LONG" else ((entry-current)/entry)*100
 
         open_positions.append({
