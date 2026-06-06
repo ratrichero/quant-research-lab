@@ -77,13 +77,19 @@ class MTFCalculator:
 
         if direction == "LONG":
 
-            if distance_atr <= 0:
-                # Soft suppression for against-trend
-                return max(0.1, 0.2 + distance_atr / 6.0)
-                # qua khắc nghiệt, mtf thường bằng 0
-                #return max(0.0, 0.1 + distance_atr / 6.0)
+            if distance_atr >= 0:
+                # ✅ Close TRÊN ema200 → thuận trend LONG
+                return min(1.0, distance_atr / 3.0)
 
-            return min(1.0, distance_atr / 3.0)
+            else:
+                # ✅ Close DƯỚI ema200 → against-trend
+                # Mirror SHORT: soft decay, floor = 0.0 (không ưu đãi)
+                val = 0.1 - (-distance_atr) / 6.0
+                #
+                # distance_atr = -0.1 → 0.1 - 0.017 = 0.083  (hơi dưới, vẫn có score nhỏ)
+                # distance_atr = -0.6 → 0.1 - 0.100 = 0.000  (xa hơn → về 0)
+                # distance_atr = -2.0 → 0.1 - 0.333 = 0.000  (rất xa → 0)
+                return max(0.0, val)
 
         else:
 
