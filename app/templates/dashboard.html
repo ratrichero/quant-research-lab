@@ -257,24 +257,46 @@
     </div>
     <div class="table-wrapper">
       <table style="min-width:800px;">
-        <thead>
-          <tr>
-            <th>#</th>
-            <th style="text-align:left;">Symbol</th>
-            <th style="text-align:left;">Pattern</th>
-            <th>Dir</th>
-            <th>TF</th>
-            <th>Entry</th>
-            <th>Current</th>
-            <th>Stop Loss</th>
-            <th>Take Profit</th>
-            <th>PnL %</th>
-            <th>Regime</th>
-            <th>Score</th>
-            <th>Opened At</th>
-            <th>Action</th>
-          </tr>
-        </thead>
+        <th>#</th>
+
+        <th onclick="sortOpen('symbol')" class="sortable">
+          Symbol <span id="open-icon-symbol"></span>
+        </th>
+
+        <th onclick="sortOpen('pattern')" class="sortable">
+          Pattern <span id="open-icon-pattern"></span>
+        </th>
+
+        <th onclick="sortOpen('direction')" class="sortable">
+          Dir <span id="open-icon-direction"></span>
+        </th>
+
+        <th onclick="sortOpen('timeframe')" class="sortable">
+          TF <span id="open-icon-timeframe"></span>
+        </th>
+
+        <th>Entry</th>
+        <th>Current</th>
+        <th>Stop Loss</th>
+        <th>Take Profit</th>
+
+        <th onclick="sortOpen('pnl')" class="sortable">
+          PnL % <span id="open-icon-pnl"></span>
+        </th>
+
+        <th onclick="sortOpen('regime')" class="sortable">
+          Regime <span id="open-icon-regime"></span>
+        </th>
+
+        <th onclick="sortOpen('score')" class="sortable">
+          Score <span id="open-icon-score"></span>
+        </th>
+
+        <th onclick="sortOpen('created_at')" class="sortable">
+          Opened <span id="open-icon-created_at"></span>
+        </th>
+
+        <th>Action</th>
         <tbody id="open-table-body">
           {% if not open_positions %}
           <tr><td colspan="11" class="center" style="color:#888;padding:20px;">Không có lệnh đang mở</td></tr>
@@ -662,6 +684,40 @@
     {
       const res = await fetch("/api/open-positions");
       const data = await res.json();
+
+      // ✅ FRONTEND SORT
+      if (openSort) {
+
+          data.sort((a, b) => {
+
+              let valA = a[openSort];
+              let valB = b[openSort];
+
+              // ✅ Sort PnL riêng
+              if (openSort === "pnl") {
+                  valA = Number(a.pnl);
+                  valB = Number(b.pnl);
+                  return openOrder === "asc" ? valA - valB : valB - valA;
+              }
+
+              // ✅ Sort number
+              if (typeof valA === "number") {
+                  return openOrder === "asc"
+                      ? valA - valB
+                      : valB - valA;
+              }
+
+              // ✅ Sort string
+              valA = (valA || "").toString().toLowerCase();
+              valB = (valB || "").toString().toLowerCase();
+
+              if (openOrder === "asc") {
+                  return valA.localeCompare(valB);
+              } else {
+                  return valB.localeCompare(valA);
+              }
+          });
+      }
       
       const tbody = document.getElementById("open-table-body");
       tbody.innerHTML = "";
@@ -780,10 +836,11 @@
         
         previousPrices[symbol] = newPrice;
         });
+      updateOpenSortIcons();
     }
     
-    refreshOpenPositions();
-    setInterval(refreshOpenPositions, 5000); // 5 giây một lần
+  refreshOpenPositions();
+  setInterval(refreshOpenPositions, 5000); // 5 giây một lần
     
 
   /* ── Gọi đóng lệnh tự động ── */
@@ -856,6 +913,9 @@
   let currentSort = "exit_time";
   let currentOrder = "desc";
   let totalPages = 1;
+
+  let openSort = "created_at";
+  let openOrder = "desc";
 
   async function loadRecent(page = 1, sort = currentSort, order = currentOrder) {
 
@@ -1073,6 +1133,44 @@ async function closeAllPositions() {
     }
 
     btns.forEach(b => b.disabled = false);
+}
+
+function sortOpen(column) {
+
+    if (openSort === column) {
+        openOrder = openOrder === "asc" ? "desc" : "asc";
+    } else {
+        openSort = column;
+        openOrder = "desc";
+    }
+
+    updateOpenSortIcons();
+    refreshOpenPositions();
+}
+
+function updateOpenSortIcons() {
+
+    const columns = [
+        "symbol",
+        "pattern",
+        "direction",
+        "timeframe",
+        "pnl",
+        "regime",
+        "score",
+        "created_at"
+    ];
+
+    columns.forEach(col => {
+        const el = document.getElementById(`open-icon-${col}`);
+        if (!el) return;
+
+        if (col === openSort) {
+            el.innerHTML = openOrder === "asc" ? "▲" : "▼";
+        } else {
+            el.innerHTML = "";
+        }
+    });
 }
 
 </script>
