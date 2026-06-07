@@ -554,6 +554,8 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                 if not pattern:
                     continue
 
+                strategy_name = "candlestick"
+
                 scan_stats["pattern_detected"] += 1
 
                 # ================= MTF =================
@@ -646,6 +648,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     scan_id=scan_run.id,
                     symbol=symbol,
                     pattern=pattern,
+                    strategy_name=strategy_name,
                     direction=direction,
                     trend_score=float(components.get("trend_score", 0)),
                     momentum_score=float(components.get("momentum_score", 0)),
@@ -785,6 +788,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     symbol=symbol,
                     timeframe=timeframe,
                     pattern=pattern,
+                    strategy_name=strategy_name,
                     direction=direction,
                     score=safe(score),
                     entry_price=safe(entry),
@@ -823,7 +827,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     pattern_score=safe(components.get("pattern_score")),
                     mtf_score=safe(components.get("mtf_score")),
                     total_score=safe(score),
-                    strict_penalty=safe(components.get("penalty_norm")),
+                    penalty_norm=safe(components.get("penalty_norm")),
                     rr=safe(rr)
                 )
 

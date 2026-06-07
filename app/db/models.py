@@ -35,6 +35,8 @@ class Signal(Base):
     exit_price = Column(Numeric)
     exit_reason = Column(String)
 
+    strategy_name = Column(String, nullable=False)
+
 class SignalFeature(Base):
     __tablename__ = "signal_features"
 
@@ -52,7 +54,7 @@ class SignalFeature(Base):
     volume_score = Column(Numeric)
     pattern_score = Column(Numeric)
     mtf_score = Column(Numeric)
-    strict_penalty = Column(Numeric)
+    penalty_norm = Column(Numeric)
     total_score = Column(Numeric)
 
     rr = Column(Numeric)
@@ -159,3 +161,5 @@ class ScanDebug(Base):
     rule_score_raw = Column(Float, nullable=True)
     indicators_snapshot = Column(JSON)
     derivative_bias = Column(Float, nullable=True)
+
+    strategy_name = Column(String, nullable=False)
