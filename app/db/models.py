@@ -93,7 +93,7 @@ class TradeOutcomeAnalytics(Base):
     total_score = Column(Numeric)
     trend_score = Column(Numeric)
     mtf_score = Column(Numeric)
-    strict_penalty = Column(Numeric)
+    penalty_norm = Column(Numeric)
 
     exit_reason = Column(String)
 
