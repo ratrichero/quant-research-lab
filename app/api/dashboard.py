@@ -10,6 +10,7 @@ from jinja2 import Environment, FileSystemLoader
 import os, json
 from app.services.binance_service import get_all_prices
 from sqlalchemy import desc, asc
+from app.analytics.portfolio_engine import run_portfolio_simulation
 
 router = APIRouter()
 
@@ -255,7 +256,30 @@ def dashboard(request: Request, page: int = 1):
         }
         no_data = True
     else:
-        overall = calculate_performance(closed_trades)
+        #overall = calculate_performance(closed_trades)
+
+        all_trades = db.query(Signal).filter(
+            Signal.status.in_(["WIN", "LOSS"])
+        ).all()
+
+        PORTFOLIO_CONFIG = {
+            "initial_capital": 10000,
+            "risk_per_trade": 0.01,
+            "max_portfolio_risk": 0.10
+        }
+
+        equity, timestamps, portfolio_stats = run_portfolio_simulation(
+            all_trades,
+            PORTFOLIO_CONFIG
+        )
+
+        trade_stats = calculate_performance(all_trades)
+
+        # merge lại
+        overall = {
+            **portfolio_stats,
+            **trade_stats
+        }
 
         equity = [10000]
         labels = ["Start"]

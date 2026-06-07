@@ -5,7 +5,7 @@ import time
 import traceback
 
 from app.services.binance_service import get_top_symbols, get_klines,get_klines_closed
-from app.services.indicator_service import add_indicators, add_indicators_advanced, detect_regime, detect_regime_advanced, get_market_state
+from app.services.indicator_service import add_indicators, add_indicators_advanced, detect_regime, detect_regime_advanced, get_market_state,build_indicator_snapshot
 from app.services.pattern_service import detect_pattern
 from app.services.telegram_service import send_telegram
 
@@ -411,6 +411,13 @@ def run_market_scan_multi_tf():
     from app.services.config_service import get_runtime_config
 
     runtime_cfg = get_runtime_config()
+
+    # 🛑 CHẶN TẠI ĐÂY: Nếu TOP_LIMIT <= 0, coi như hệ thống đã dừng.
+    # Không cần mở DB, không cần tính toán logic, không tốn resource.
+    if runtime_cfg.get("TOP_LIMIT", 0) <= 0:
+        print(f"💤 Scan system is PAUSED (TOP_LIMIT = 0)")
+        return
+    
     now = datetime.utcnow()
 
     # ← CHANGED: dùng context manager, không double-close
@@ -460,6 +467,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
     db.commit()
     db.refresh(config)
 
+    
     engine_metadata = {
     "engine_version": ENGINE_VERSION,
     "mtf_version": 2.1,
@@ -467,7 +475,9 @@ def scan_timeframe(db, timeframe, runtime_cfg):
     "regime_mode": "penalty",
     "regime_penalty": 0.3,
     "weight_profile": "default_v1",
-    "score_scaling": "linear_v1"
+    "score_scaling": "linear_v1",
+    "indicator_snapshot_version": 1,
+    "snapshot_features": ["ema50", "ema200", "ema200_slope", "rsi", "rsi_slope", "atr_percentile", "bb_width"]
     }
     scan_run = ScanRun(
         timeframe=timeframe,
@@ -593,7 +603,9 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     regime=regime
                 )
 
-                
+                # ================= INDICATOR SNAPSHOT =================
+
+                indicators_snapshot = build_indicator_snapshot(df)
 
                 # ================= CREATE DEBUG (DB) =================
                 debug = ScanDebug(
@@ -613,7 +625,8 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     regime=regime,
                     candle_time=last["time"].to_pydatetime(),
                     ml_prob=None,
-                    rule_score_raw=float(components.get("rule_score_raw", 0))
+                    rule_score_raw=float(components.get("rule_score_raw", 0)),
+                    indicators_snapshot=indicators_snapshot
                 )
 
                 db.add(debug)

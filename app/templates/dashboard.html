@@ -3,7 +3,7 @@
 <head>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta charset="UTF-8">
-  <link rel="icon" href="data:,">
+  <link rel="icon" href="data:image/x-icon;base64,AAABAAEAEBAAAAEAIABoBAAAFgAAACgAAAAQAAAAIAAAAAEAIAAAAAAAAAAAABMLAAATCwAAAAAAAAAAAAAA////////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA==" type="image/x-icon">
   <title>Quant Control Panel</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <style>
@@ -124,6 +124,24 @@
       margin-left: 4px;
     }
 
+    /* Container để tạo vùng cuộn cho bảng */
+  .table-container {
+    max-height: 400px; /* Độ cao tối đa của vùng bảng */
+    overflow-y: auto;  /* Cho phép cuộn dọc */
+    position: relative;
+  }
+
+  /* Sticky header */
+  .open-positions-table thead th {
+    position: sticky;
+    top: 0;
+    background-color: #333; /* Màu nền header, đổi tùy theo theme của bạn */
+    color: white;
+    z-index: 10;
+    padding: 10px;
+    border-bottom: 2px solid #ddd;
+  }
+
     /* ── Config result ── */
     #config-result { color: #4caf50; font-size: 0.9rem; }
 
@@ -164,6 +182,26 @@
       <div class="metric">
         <div class="metric-label">Sharpe</div>
         <div class="metric-value" style="color:#64b5f6;">{{ overall.sharpe_ratio }}</div>
+      </div>
+      <div class="metric">
+        <div class="metric-label">Sortino</div>
+        <div class="metric-value" style="color:#64b5f6;">
+          {{ overall.sortino_ratio }}
+        </div>
+      </div>
+
+      <div class="metric">
+        <div class="metric-label">Calmar</div>
+        <div class="metric-value" style="color:#ffb74d;">
+          {{ overall.calmar_ratio }}
+        </div>
+      </div>
+
+      <div class="metric">
+        <div class="metric-label">Max Losing Streak</div>
+        <div class="metric-value" style="color:#ff5252;">
+          {{ overall.max_consecutive_losses }}
+        </div>
       </div>
       <div class="metric">
         <div class="metric-label">Sharpe 30d</div>
@@ -246,6 +284,7 @@
   <!-- ═══════════════════════════════════════════
        OPEN POSITIONS
   ═══════════════════════════════════════════ -->
+
   <div class="section">
     <div style="display:flex;justify-content:space-between;align-items:center;">
       <h3 class="section-title" style="margin:0;">📌 Open Positions</h3>
@@ -256,6 +295,7 @@
       </button>
     </div>
     <div class="table-wrapper">
+      <!--Sau nay muốn cuộn bảng Open thì cho table vào trong thẻ này div class="table-container"></div-->
       <table style="min-width:800px;">
         <th>#</th>
 
@@ -334,6 +374,7 @@
           {% endfor %}
         </tbody>
       </table>
+      
     </div>
   </div>
 

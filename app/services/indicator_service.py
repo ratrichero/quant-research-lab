@@ -203,23 +203,25 @@ def add_indicators_advanced(
     result["rsi"] = engine.calculate_rsi(result)
     result["atr"] = engine.calculate_atr(result)
     result["vol_ma"] = engine.calculate_volume_ma(result)
-    
-    # ✅ ✅ ✅ THÊM BOLLINGER Ở ĐÂY
-    mid = result["close"].rolling(20).mean()
-    std = result["close"].rolling(20).std()
 
-    result["bb_upper"] = mid + 2 * std
-    result["bb_lower"] = mid - 2 * std
+    # ✅ Bollinger
+    bb_period = 20
+    bb_mid = result["close"].rolling(bb_period).mean()
+    bb_std = result["close"].rolling(bb_period).std()
 
-    #result["bb_position"] = (
-#        (result["close"] - result["bb_lower"]) /
- #       (result["bb_upper"] - result["bb_lower"])
-  #  )
+    result["bb_mid"] = bb_mid
+    result["bb_upper"] = bb_mid + 2 * bb_std
+    result["bb_lower"] = bb_mid - 2 * bb_std
 
     result["bb_position"] = (
         (result["close"] - result["bb_lower"]) /
         (result["bb_upper"] - result["bb_lower"])
-    ).clip(0, 1)  # ✅ clamp [0,1]
+    ).clip(0, 1)
+
+    result["bb_width"] = (
+        (result["bb_upper"] - result["bb_lower"]) /
+        result["bb_mid"]
+    )
     
     return result
 
@@ -465,3 +467,88 @@ if __name__ == "__main__":
     state = get_market_state(df_result)
     for key, value in state.items():
         print(f"  {key:20s}: {value}")
+
+def build_indicator_snapshot(df: pd.DataFrame) -> dict:
+    """
+    Minimal Quant Snapshot (Research-Grade, Not Overfit)
+
+    ✅ Normalized slopes
+    ✅ No lookahead bias
+    ✅ Cross-asset comparable
+    ✅ Lightweight
+    """
+
+    def safe_float(val):
+        return float(val) if val is not None and pd.notna(val) else None
+
+    last = df.iloc[-1]
+
+    # ================= TREND =================
+
+    ema50 = safe_float(last.get("ema50"))
+    ema200 = safe_float(last.get("ema200"))
+    close = safe_float(last.get("close"))
+
+    # EMA distance (structure position)
+    ema_distance = None
+    if ema200 and close and ema200 != 0:
+        ema_distance = (close - ema200) / ema200
+
+    # ✅ Normalized EMA200 slope (% per candle, 6-candle window)
+    ema200_slope = None
+    if len(df) >= 7 and pd.notna(df["ema200"].iloc[-7]):
+        prev = df["ema200"].iloc[-7]
+        if prev != 0:
+            ema200_slope = (ema200 - prev) / prev / 6.0
+
+    # ================= MOMENTUM =================
+
+    rsi = safe_float(last.get("rsi"))
+
+    # ✅ RSI slope per candle (4-period window)
+    rsi_slope = None
+    if len(df) >= 5 and pd.notna(df["rsi"].iloc[-5]):
+        rsi_slope = (rsi - df["rsi"].iloc[-5]) / 4.0
+
+    # ================= VOLATILITY =================
+
+    atr = safe_float(last.get("atr"))
+
+    # ✅ ATR percentile (last 100 candles)
+    atr_percentile = None
+    if len(df) >= 100:
+        atr_window = df["atr"].iloc[-100:]
+        if atr is not None:
+            atr_percentile = float(
+                (atr_window < atr).sum() / len(atr_window)
+            )
+
+    # ✅ Bollinger Band Width (normalized)
+    bb_width = None
+    bb_upper = safe_float(last.get("bb_upper"))
+    bb_lower = safe_float(last.get("bb_lower"))
+    bb_mid = safe_float(last.get("bb_mid"))
+
+    if bb_mid is not None and bb_upper is not None and bb_lower is not None:
+        if bb_mid != 0:
+            bb_width = (bb_upper - bb_lower) / bb_mid
+
+    # ================= FINAL SNAPSHOT =================
+
+    return {
+        # Trend
+        "close": close,
+        "ema50": ema50,
+        "ema200": ema200,
+        "ema_distance": ema_distance,
+        "ema200_slope": ema200_slope,
+
+        # Momentum
+        "rsi": rsi,
+        "rsi_slope": rsi_slope,
+
+        # Volatility
+        "atr": atr,
+        "atr_percentile": atr_percentile,
+        "bb_width": bb_width,
+    }
