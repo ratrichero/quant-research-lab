@@ -96,7 +96,7 @@ def save_trade_outcome(db, trade, feature):
         total_score=float(feature.total_score),
         trend_score=float(feature.trend_score),
         mtf_score=float(feature.mtf_score),
-        strict_penalty=float(feature.strict_penalty),
+        penalty_norm=float(feature.penalty_norm),
 
         exit_reason=trade.exit_reason
     )
