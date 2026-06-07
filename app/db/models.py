@@ -158,3 +158,4 @@ class ScanDebug(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     rule_score_raw = Column(Float, nullable=True)
     indicators_snapshot = Column(JSON)
+    derivative_bias = Column(Float, nullable=True)

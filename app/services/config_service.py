@@ -1,3 +1,4 @@
+import json
 from app.db.session import SessionLocal
 from sqlalchemy import text
 
@@ -9,6 +10,14 @@ DEFAULTS = {
     "MTF_ENABLED": "true",
     "AI_THRESHOLD": "0.0",
     "TOP_LIMIT": "400",
+    "DERIVATIVE_CONFIG": json.dumps({
+        "pre_buffer": 1,
+        "bias_scale": {
+            "15m": 0.6,
+            "1h": 0.8,
+            "4h": 1.0
+        }
+    })
 }
 
 def get_runtime_config():
@@ -19,6 +28,17 @@ def get_runtime_config():
 
     config = {k: v for k, v in rows}
 
+    # ===== DERIVATIVE CONFIG PARSE =====
+    derivative_raw = config.get(
+        "DERIVATIVE_CONFIG",
+        DEFAULTS["DERIVATIVE_CONFIG"]
+    )
+
+    try:
+        derivative_cfg = json.loads(derivative_raw)
+    except Exception:
+        derivative_cfg = json.loads(DEFAULTS["DERIVATIVE_CONFIG"])
+
     return {
         "TIMEFRAME": config.get("TIMEFRAME", "15m"),
         "SCORE_THRESHOLD": float(config.get("SCORE_THRESHOLD", 5)),
@@ -28,7 +48,10 @@ def get_runtime_config():
         "COOLDOWN_HOURS": int(config.get("COOLDOWN_HOURS", 4)),
         "AI_THRESHOLD": float(config.get("AI_THRESHOLD", 0.0)),
         "TOP_LIMIT": int(config.get("TOP_LIMIT", 100)),
-        "MTF_ENABLED": config.get("MTF_ENABLED", "true").lower() == "true"
+        "MTF_ENABLED": config.get("MTF_ENABLED", "true").lower() == "true",
+
+        # ✅ DERIVATIVE CONFIG
+        "DERIVATIVE_CONFIG": derivative_cfg
     }
 
 def update_runtime_config(data: dict):

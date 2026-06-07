@@ -18,6 +18,7 @@ from app.services.llm_router import generate_explanation
 from app.db.models import ScanConfig, ScanRun, ScanDebug
 from app.services.mtf_service import MTFCalculator
 from app.core.config import ENGINE_VERSION
+from app.services.derivatives_service import compute_derivative_bias
 
 # ── Timeframe-based Weights dùng để tính score ───────────────────────────────
 
@@ -411,6 +412,7 @@ def run_market_scan_multi_tf():
     from app.services.config_service import get_runtime_config
 
     runtime_cfg = get_runtime_config()
+    
 
     # 🛑 CHẶN TẠI ĐÂY: Nếu TOP_LIMIT <= 0, coi như hệ thống đã dừng.
     # Không cần mở DB, không cần tính toán logic, không tốn resource.
@@ -468,6 +470,13 @@ def scan_timeframe(db, timeframe, runtime_cfg):
     db.refresh(config)
 
     
+    deriv_cfg = runtime_cfg.get("DERIVATIVE_CONFIG", {})
+    pre_buffer = deriv_cfg.get("pre_buffer", 1)
+    bias_scale_map = deriv_cfg.get("bias_scale", {
+        "15m": 0.6,
+        "1h": 0.8,
+        "4h": 1.0
+    })
     engine_metadata = {
     "engine_version": ENGINE_VERSION,
     "mtf_version": 2.1,
@@ -477,7 +486,8 @@ def scan_timeframe(db, timeframe, runtime_cfg):
     "weight_profile": "default_v1",
     "score_scaling": "linear_v1",
     "indicator_snapshot_version": 1,
-    "snapshot_features": ["ema50", "ema200", "ema200_slope", "rsi", "rsi_slope", "atr_percentile", "bb_width"]
+    "snapshot_features": ["ema50", "ema200", "ema200_slope", "rsi", "rsi_slope", "atr_percentile", "bb_width"],
+    "derivative": {"enabled": True,"pre_buffer": pre_buffer,"bias_scale": bias_scale_map}
     }
     scan_run = ScanRun(
         timeframe=timeframe,
@@ -603,6 +613,30 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     regime=regime
                 )
 
+                # ================= derivative buff score =================
+                technical_score = score
+
+                technical_floor = SCORE_THRESHOLD - pre_buffer
+
+                if technical_score < technical_floor:
+                    scan_stats["score_reject"] += 1
+                    continue
+
+                raw_bias = compute_derivative_bias(
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    direction=direction
+                )
+
+                bias_scale = bias_scale_map.get(timeframe, 0.6)
+
+                derivative_bias = raw_bias * bias_scale
+                # Final Score đã được buff các chỉ số liên quan đến Funding, OL...
+                score = round(
+                    max(0, min(10, technical_score + derivative_bias)),
+                    2
+                )
+
                 # ================= INDICATOR SNAPSHOT =================
 
                 indicators_snapshot = build_indicator_snapshot(df)
@@ -621,6 +655,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     penalty=float(components.get("penalty_norm", 0)),
                     total_score=float(score),
                     passed_score=score >= SCORE_THRESHOLD,
+                    derivative_bias=float(derivative_bias),
                     block_reason=None,
                     regime=regime,
                     candle_time=last["time"].to_pydatetime(),
@@ -648,7 +683,8 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     "block_reason": None,
                     "candle_time": last["time"].to_pydatetime(),
                     "ml_prob": None,
-                    "regime": regime
+                    "regime": regime,
+                    "derivative_bias": derivative_bias,
                 })
 
                 # ================= FILTER =================
@@ -865,6 +901,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
         f"{'P':>6}"
         f"{'MTF':>5}"
         f"{'PEN':>5}"
+        f"{'DER':>6}"
         f"{'Score':>7}"
         f"  {'Bar':<12}"
         f"  Block Reason"
@@ -886,6 +923,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
             f"{fmt(row.get('pattern_score'),  6, decimals=2)}"
             f"{fmt(row.get('mtf'),            5, decimals=2)}"
             f"{fmt(row.get('penalty'),        5, decimals=1)}"
+            f"{fmt(row.get('derivative_bias'), 6, decimals=2)}"
             f"{fmt(total,                     7, decimals=2)}"
             f"  {bar:<12}"
             f"  {reason_label}"
