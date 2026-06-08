@@ -17,12 +17,11 @@ def save_trade_outcome(db, trade, feature):
     take_profit = float(trade.take_profit)
     result_percent = float(trade.result_percent)
 
-    # ✅ Duration
     duration_minutes = (
         (trade.exit_time - trade.created_at).total_seconds() / 60
     )
 
-    # ✅ ALWAYS use 1m for precise MAE/MFE
+    # ✅ Luôn dùng 1m cho MAE/MFE
     interval = "1m"
 
     df = get_klines(

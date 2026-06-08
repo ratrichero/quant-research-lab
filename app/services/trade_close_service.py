@@ -2,36 +2,58 @@ from datetime import datetime
 from app.db.models import SignalFeature
 from app.services.outcome_service import save_trade_outcome
 
+
 def close_trade(db, trade, current_price, reason):
 
     if trade.status != "OPEN":
         return
 
     entry = float(trade.entry_price)
+    current_price = float(current_price)
 
-    # ✅ Xác định exit_price theo lý thuyết
-    if reason == "SL":
-        exit_price = float(trade.stop_loss)
-        trade.status = "LOSS"
-    elif reason == "TP":
-        exit_price = float(trade.take_profit)
-        trade.status = "WIN"
+    # ============================================================
+    # 1️⃣ GAP RECOVERY CHECK
+    # ============================================================
+
+    if reason in ["SL", "TP"]:
+
+        theoretical_price = (
+            float(trade.stop_loss) if reason == "SL"
+            else float(trade.take_profit)
+        )
+
+        gap_pct = abs(
+            (current_price - theoretical_price) / theoretical_price * 100
+        )
+
+        # ✅ Nếu vượt quá 1% so với SL/TP → coi là abnormal
+        if gap_pct > 2.0:
+
+            exit_price = current_price
+            trade.exit_reason = "GAP"
+
+        else:
+            exit_price = theoretical_price
+            trade.exit_reason = reason
+
     else:
-        exit_price = float(current_price)
-        trade.status = "WIN" if (
-            (exit_price - entry > 0 and trade.direction == "LONG") or
-            (entry - exit_price > 0 and trade.direction == "SHORT")
-        ) else "LOSS"
+        # Manual close
+        exit_price = current_price
+        trade.exit_reason = reason
 
-    trade.exit_price = exit_price
+    trade.exit_price = float(exit_price)
 
-    # ✅ Tính return dựa trên exit_price đã chuẩn hóa
+    # ============================================================
+    # 2️⃣ TÍNH RESULT PERCENT (DỰA TRÊN exit_price)
+    # ============================================================
+
     if trade.direction == "LONG":
         trade.result_percent = ((exit_price - entry) / entry) * 100
     else:
         trade.result_percent = ((entry - exit_price) / entry) * 100
 
-    trade.exit_reason = reason
+    trade.status = "WIN" if trade.result_percent > 0 else "LOSS"
+
     trade.exit_time = datetime.utcnow()
 
     feature = db.query(SignalFeature).filter(
