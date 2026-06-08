@@ -68,7 +68,7 @@ async def monitor_loop():
         start = datetime.now()
 
         try:
-            print(f"[MONITOR At:] {start}")
+            #print(f"[MONITOR At:] {start}")
             await asyncio.to_thread(monitor_open_trades)
         except Exception as e:
             print(f"[MONITOR ERROR] {e}")

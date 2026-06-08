@@ -180,60 +180,110 @@
   <!-- ═══════════════════════════════════════════
        OVERVIEW METRICS
   ═══════════════════════════════════════════ -->
+
+  <!-- ═══════Strategy Metrics════════════ -->
+
   <div class="section">
-    <div class="metric-grid">
-      <div class="metric">
-        <div class="metric-label">Total Trades</div>
-        <div class="metric-value" style="color:#ccc;">{{ overall.total_trades }}</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Winrate</div>
-        <div class="metric-value" style="color:{% if overall.winrate_percent >= 60 %}#4caf50{% else %}#ff5252{% endif %};">
-          {{ overall.winrate_percent }}%
-        </div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Sharpe</div>
-        <div class="metric-value" style="color:#64b5f6;">{{ overall.sharpe_ratio }}</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Sortino</div>
-        <div class="metric-value" style="color:#64b5f6;">
-          {{ overall.sortino_ratio }}
-        </div>
-      </div>
+  <h3 class="section-title">🧠 Strategy Metrics (Trade-Level)</h3>
+  <div class="metric-grid">
 
-      <div class="metric">
-        <div class="metric-label">Calmar</div>
-        <div class="metric-value" style="color:#ffb74d;">
-          {{ overall.calmar_ratio }}
-        </div>
-      </div>
+    <div class="metric">
+      <div class="metric-label">Total Trades</div>
+      <div class="metric-value">{{ strategy_stats.total_trades }}</div>
+    </div>
 
-      <div class="metric">
-        <div class="metric-label">Max Losing Streak</div>
-        <div class="metric-value" style="color:#ff5252;">
-          {{ overall.max_consecutive_losses }}
-        </div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Sharpe 30d</div>
-        <div class="metric-value" style="color:#64b5f6;">{{ rolling_sharpe }}</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Max DD</div>
-        <div class="metric-value" style="color:#ff5252;">{{ overall.max_drawdown_percent }}%</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Profit Factor</div>
-        <div class="metric-value" style="color:#ffb74d;">{{ overall.profit_factor }}</div>
-      </div>
-      <div class="metric">
-        <div class="metric-label">Expectancy</div>
-        <div class="metric-value" style="color:#a5d6a7;">{{ overall.expectancy_percent }}%</div>
+    <div class="metric">
+      <div class="metric-label">Winrate</div>
+      <div class="metric-value">
+        {{ strategy_stats.winrate_percent }}%
       </div>
     </div>
+
+    <div class="metric">
+      <div class="metric-label">Profit Factor</div>
+      <div class="metric-value">
+        {{ strategy_stats.profit_factor }}
+      </div>
+    </div>
+
+    <div class="metric">
+      <div class="metric-label">Expectancy</div>
+      <div class="metric-value">
+        {{ strategy_stats.expectancy_percent }}%
+      </div>
+    </div>
+
+    <div class="metric">
+      <div class="metric-label">Sharpe (Trade)</div>
+      <div class="metric-value">
+        {{ strategy_stats.sharpe_ratio }}
+      </div>
+    </div>
+
+    <div class="metric">
+      <div class="metric-label">Max Losing Streak</div>
+      <div class="metric-value">
+        {{ strategy_stats.max_consecutive_losses }}
+      </div>
+    </div>
+
+    <div class="metric">
+      <div class="metric-label">Max Win Streak</div>
+      <div class="metric-value">
+        {{ strategy_stats.max_consecutive_wins }}
+      </div>
+    </div>
+
   </div>
+</div>
+
+<!-- ═══════Portfolio Metrics════════════ -->
+<div class="section">
+  <h3 class="section-title">💰 Portfolio Metrics (Capital-Level)</h3>
+  <div class="metric-grid">
+
+    <div class="metric">
+      <div class="metric-label">Initial Capital</div>
+      <div class="metric-value">10000</div>
+    </div>
+
+    <div class="metric">
+      <div class="metric-label">Final NAV</div>
+      <div class="metric-value">
+        {{ portfolio_stats.final_nav }}
+      </div>
+    </div>
+
+    <div class="metric">
+      <div class="metric-label">Total Return</div>
+      <div class="metric-value">
+        {{ portfolio_stats.total_return_percent }}%
+      </div>
+    </div>
+
+    <div class="metric">
+      <div class="metric-label">Max Drawdown</div>
+      <div class="metric-value">
+        {{ portfolio_stats.max_drawdown_percent }}%
+      </div>
+    </div>
+
+    <div class="metric">
+      <div class="metric-label">Calmar</div>
+      <div class="metric-value">
+        {{ portfolio_stats.calmar_ratio }}
+      </div>
+    </div>
+
+    <div class="metric">
+      <div class="metric-label">Sharpe (Portfolio)</div>
+      <div class="metric-value">
+        {{ portfolio_stats.sharpe_ratio }}
+      </div>
+    </div>
+
+  </div>
+</div>
 
   <!-- ═══════════════════════════════════════════
        WEEKLY vs MONTHLY
@@ -275,14 +325,62 @@
   </div>
 
   <!-- ═══════════════════════════════════════════
-       EQUITY CURVE
-  ═══════════════════════════════════════════ -->
-  <div class="section">
-    <h3 class="section-title">📈 Equity Curve</h3>
-    <div class="chart-box h300">
-      <canvas id="equityChart"></canvas>
+          FILTER EQUITY
+    ═══════════════════════════════════════════ -->
+    <div class="section">
+      <h3 class="section-title">🔎 Filter Equity</h3>
+
+      
     </div>
+
+  <!-- ═══════════════════════════════════════════
+       EQUITY CURVE
+═══════════════════════════════════════════ -->
+<div class="section">
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:nowrap;">
+
+    <h3 class="section-title" style="margin:0;">📈 Equity Curve</h3>
+
+    <form method="get" action="/dashboard"
+          style="display:flex;gap:12px;align-items:center;white-space:nowrap;">
+
+      <div style="display:flex;flex-direction:column;">
+        <label style="font-size:12px;">Start</label>
+        <input type="date" name="start_date"
+               value="{{ request.query_params.get('start_date','') }}">
+      </div>
+
+      <div style="display:flex;flex-direction:column;">
+        <label style="font-size:12px;">End</label>
+        <input type="date" name="end_date"
+               value="{{ request.query_params.get('end_date','') }}">
+      </div>
+
+      <div style="display:flex;flex-direction:column;">
+        <label style="font-size:12px;">TF</label>
+        <select name="tf">
+          <option value="">All</option>
+          <option value="15m"
+            {% if request.query_params.get('tf') == '15m' %}selected{% endif %}>15m</option>
+          <option value="1h"
+            {% if request.query_params.get('tf') == '1h' %}selected{% endif %}>1h</option>
+          <option value="4h"
+            {% if request.query_params.get('tf') == '4h' %}selected{% endif %}>4h</option>
+          <option value="1d"
+            {% if request.query_params.get('tf') == '1d' %}selected{% endif %}>1d</option>
+        </select>
+      </div>
+
+      <button type="submit" style="margin-top:14px;">Apply</button>
+
+    </form>
+
   </div>
+
+  <div class="chart-box h300" style="margin-top:15px;">
+    <canvas id="equityChart"></canvas>
+  </div>
+</div>
 
   <!-- ═══════════════════════════════════════════
        DRAWDOWN

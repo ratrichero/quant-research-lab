@@ -193,14 +193,34 @@ def api_recent_closed(
         db.close()
 
 @router.get("/dashboard", response_class=HTMLResponse)
-def dashboard(request: Request, page: int = 1):
+def dashboard(request: Request, page: int = 1,start_date: str = None,end_date: str = None,tf: str = None):
+    
+    selected_tf = tf
+    start_dt = None
+    end_dt = None
+
+    if start_date:
+        start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+
+    if end_date:
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
 
     cfg = get_runtime_config()
 
     db = SessionLocal()
-    closed_trades = db.query(Signal).filter(
-        Signal.status.in_(["WIN", "LOSS"])
-    ).order_by(Signal.candle_time.asc()).all()
+
+    query = db.query(Signal).filter(Signal.status.in_(["WIN", "LOSS"]))
+
+    if selected_tf:
+        query = query.filter(Signal.timeframe == selected_tf)
+
+    if start_dt:
+        query = query.filter(Signal.candle_time >= start_dt)
+
+    if end_dt:
+        query = query.filter(Signal.candle_time <= end_dt)
+
+    closed_trades = query.order_by(Signal.candle_time.asc()).all()
 
     open_trades = db.query(Signal).filter(
         Signal.status == "OPEN"
@@ -228,68 +248,83 @@ def dashboard(request: Request, page: int = 1):
 
     db.close()
     # ================= PERFORMANCE =================
+
+    INITIAL_CAPITAL = 10000
+
     if not closed_trades:
-        overall = {
+
+        strategy_stats = {
             "total_trades": 0,
             "winrate_percent": 0,
-            "sharpe_ratio": 0,
-            "max_drawdown_percent": 0,
             "profit_factor": 0,
             "expectancy_percent": 0,
+            "sharpe_ratio": 0,
+            "max_consecutive_losses": 0,
+            "max_consecutive_wins": 0,
         }
 
-        equity = [10000]
-        labels = ["Start"]
+        portfolio_stats = {
+            "final_nav": INITIAL_CAPITAL,
+            "total_return_percent": 0,
+            "max_drawdown_percent": 0,
+            "calmar_ratio": 0,
+            "sharpe_ratio": 0,
+            "sortino_ratio": 0,
+        }
+
+        weekly_stats = strategy_stats
+        monthly_stats = strategy_stats
+
+        equity = [INITIAL_CAPITAL]
+        labels = ["0"]
         drawdowns = [0]
-        rolling_sharpe = 0
 
-        weekly_stats = {
-            "total_trades": 0,
-            "winrate_percent": 0,
-            "sharpe_ratio": 0,
-        }
-
-        monthly_stats = {
-            "total_trades": 0,
-            "winrate_percent": 0,
-            "sharpe_ratio": 0,
-        }
         no_data = True
+
     else:
-        #overall = calculate_performance(closed_trades)
 
-        all_trades = db.query(Signal).filter(
-            Signal.status.in_(["WIN", "LOSS"])
-        ).all()
+        # ===== STRATEGY METRICS =====
+        strategy_stats = calculate_performance(closed_trades)
 
+        # Weekly / Monthly (trade-level)
+        cutoff_week = datetime.utcnow() - timedelta(days=7)
+        cutoff_month = datetime.utcnow() - timedelta(days=30)
+
+        weekly_trades = [
+            t for t in closed_trades if t.candle_time >= cutoff_week
+        ]
+
+        monthly_trades = [
+            t for t in closed_trades if t.candle_time >= cutoff_month
+        ]
+
+        weekly_stats = (
+            calculate_performance(weekly_trades)
+            if weekly_trades else strategy_stats
+        )
+
+        monthly_stats = (
+            calculate_performance(monthly_trades)
+            if monthly_trades else strategy_stats
+        )
+
+        # ===== PORTFOLIO METRICS =====
         PORTFOLIO_CONFIG = {
-            "initial_capital": 10000,
+            "initial_capital": INITIAL_CAPITAL,
             "risk_per_trade": 0.01,
             "max_portfolio_risk": 0.10
         }
 
         equity, timestamps, portfolio_stats = run_portfolio_simulation(
-            all_trades,
+            closed_trades,
             PORTFOLIO_CONFIG
         )
 
-        trade_stats = calculate_performance(all_trades)
-
-        # merge lại
-        overall = {
-            **portfolio_stats,
-            **trade_stats
-        }
-
-        equity = [10000]
-        labels = ["Start"]
-
-        for i, t in enumerate(closed_trades):
-            equity.append(equity[-1] * (1 + float(t.result_percent) / 100))
-            labels.append(str(i + 1))
+        labels = [ts.strftime("%Y-%m-%d") for ts in timestamps]
 
         peaks = []
         max_peak = equity[0]
+
         for val in equity:
             max_peak = max(max_peak, val)
             peaks.append(max_peak)
@@ -299,36 +334,11 @@ def dashboard(request: Request, page: int = 1):
             for i in range(len(equity))
         ]
 
-        # Rolling 30-day Sharpe
-        cutoff_30 = datetime.utcnow() - timedelta(days=30)
-        last_30 = [t for t in closed_trades if t.candle_time >= cutoff_30]
-        rolling_sharpe = calculate_performance(last_30)["sharpe_ratio"] if last_30 else 0
-
-        # Weekly / Monthly
-        cutoff_week = datetime.utcnow() - timedelta(days=7)
-        cutoff_month = datetime.utcnow() - timedelta(days=30)
-
-        weekly_trades = [t for t in closed_trades if t.candle_time >= cutoff_week]
-        monthly_trades = [t for t in closed_trades if t.candle_time >= cutoff_month]
-
-        def empty_stats():
-            return {
-                "total_trades": 0,
-                "winrate_percent": 0,
-                "sharpe_ratio": 0,
-                "max_drawdown_percent": 0,
-                "profit_factor": 0,
-                "expectancy_percent": 0,
-            }
-
-        weekly_stats = calculate_performance(weekly_trades) if weekly_trades else empty_stats()
-        monthly_stats = calculate_performance(monthly_trades) if monthly_trades else empty_stats()
-
         no_data = False
 
     # Risk Guard
     MAX_DD_ALERT = 15
-    risk_alert = abs(overall["max_drawdown_percent"]) >= MAX_DD_ALERT
+    risk_alert = abs(portfolio_stats["max_drawdown_percent"]) >= MAX_DD_ALERT
 
     # Open Positions
     price_map = get_all_prices()
@@ -387,12 +397,13 @@ def dashboard(request: Request, page: int = 1):
     #print("MONTHLY:", monthly_stats)
     html = template.render(
         timedelta=timedelta,
-        overall=overall,
+        strategy_stats=strategy_stats,
+        portfolio_stats=portfolio_stats,
         equity=json.dumps(equity),
         labels=json.dumps(labels),
         drawdowns=json.dumps(drawdowns),
         no_data=no_data,
-        rolling_sharpe=rolling_sharpe,
+        #rolling_sharpe=rolling_sharpe,
         weekly_stats=weekly_stats,
         monthly_stats=monthly_stats,
         risk_alert=risk_alert,
@@ -404,6 +415,7 @@ def dashboard(request: Request, page: int = 1):
         recent_closed=recent_page,
         page=page,
         total_pages=total_pages,
+        request=request,
     )
 
     return HTMLResponse(html)
