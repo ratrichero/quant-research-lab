@@ -8,6 +8,7 @@ import traceback
 # ===== Import service chạy ngầm =====
 from app.services.signal_service import run_market_scan_multi_tf
 from app.services.trade_monitor import monitor_open_trades
+from app.services.pending_engine import process_pending_signals
 
 # ===== Import routers =====
 from app.api.health import router as health_router
@@ -22,6 +23,7 @@ from app.api.telegram_webhook import router as telegram_webhook_router
 from app.api.config import router as config_router
 from app.api.monitor_trade import router as monitor_trade_router
 from app.services.config_service import get_runtime_config
+
 
 time_scheduler = 1
 time_monitor = 5
@@ -70,8 +72,13 @@ async def monitor_loop():
         start = datetime.now()
 
         try:
+            # ✅ 1. Process Pending (fill + expire)
+            await asyncio.to_thread(process_pending_signals)
+
+            # ✅ 2. Process Open Trades (SL/TP)
             #print(f"[MONITOR At:] {start}")
             await asyncio.to_thread(monitor_open_trades)
+
         except Exception as e:
             print(f"[MONITOR ERROR] {e}")
 

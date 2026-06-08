@@ -163,3 +163,54 @@ class ScanDebug(Base):
     derivative_bias = Column(Float, nullable=True)
 
     strategy_name = Column(String, nullable=False)
+
+class PendingSignal(Base):
+    __tablename__ = "pending_signals"
+
+    id = Column(BigInteger, primary_key=True)
+
+    symbol = Column(String, nullable=False)
+    timeframe = Column(String, nullable=False)
+    pattern = Column(String)
+    strategy_name = Column(String)
+    direction = Column(String)
+
+    # ===== SCORE CONTEXT =====
+    signal_score = Column(Float)
+    rule_score_raw = Column(Float)
+    derivative_bias = Column(Float)
+
+    trend_score = Column(Float)
+    momentum_score = Column(Float)
+    volume_score = Column(Float)
+    pattern_score = Column(Float)
+    mtf_score = Column(Float)
+    penalty = Column(Float)
+
+    ml_prob = Column(Float)
+
+    # ===== SNAPSHOT =====
+    indicators_snapshot = Column(JSON)
+    candle_time = Column(DateTime)
+
+    # ===== ENTRY DATA =====
+    trigger_price = Column(Float, nullable=False)
+    stop_loss = Column(Float, nullable=False)
+    take_profit = Column(Float, nullable=False)
+    rr = Column(Float)
+
+    atr_value = Column(Float)
+    atr_mult_entry = Column(Float)
+
+    regime = Column(String)
+
+    # ===== LINK =====
+    scan_id = Column(Integer, ForeignKey("scan_run.id"))
+    scan_debug_id = Column(Integer, ForeignKey("scan_debug.id"))
+
+    # ===== STATUS =====
+    status = Column(String, default="WAIT")
+    expire_at = Column(DateTime)
+    filled_at = Column(DateTime)
+
+    created_at = Column(DateTime, default=datetime.utcnow)

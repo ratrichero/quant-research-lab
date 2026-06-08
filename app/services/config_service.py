@@ -26,8 +26,21 @@ DEFAULTS = {
             "1h": 0.8,
             "4h": 1.0
         }
+    }),
+    "PENDING_CONFIG": json.dumps({
+        "enabled": True,
+        "atr_entry_multiplier": {
+            "15m": 0.4,
+            "1h": 0.5,
+            "4h": 0.6
+        },
+        "expire_hours": {
+            "15m": 2,
+            "1h": 4,
+            "4h": 12
+        }
     })
-}
+    }
 _runtime_cache = None
 
 def get_runtime_config(force_reload=False):
@@ -67,6 +80,17 @@ def get_runtime_config(force_reload=False):
         risk_cfg = json.loads(DEFAULTS["RISK_CONFIG"])
 
 
+    # ===== PENDING CONFIG PARSE =====
+    pending_raw = config.get(
+        "PENDING_CONFIG",
+        DEFAULTS["PENDING_CONFIG"]
+    )
+
+    try:
+        pending_cfg = json.loads(pending_raw)
+    except Exception:
+        pending_cfg = json.loads(DEFAULTS["PENDING_CONFIG"])
+
      # ✅ Build config dict
     _runtime_cache = {
         "TIMEFRAME": config.get("TIMEFRAME", DEFAULTS["TIMEFRAME"]),
@@ -81,7 +105,8 @@ def get_runtime_config(force_reload=False):
         "ENABLE_SCHEDULER": config.get("ENABLE_SCHEDULER", "true").lower() == "true",
         "ENABLE_MONITOR": config.get("ENABLE_MONITOR", "true").lower() == "true",
         "DERIVATIVE_CONFIG": derivative_cfg,
-        "RISK_CONFIG": risk_cfg
+        "RISK_CONFIG": risk_cfg,
+        "PENDING_CONFIG": pending_cfg,
     }
     
     return _runtime_cache
@@ -92,7 +117,7 @@ def update_runtime_config(data: dict):
     for k, v in data.items():
 
         # ✅ Nếu là JSON config thì validate
-        if k in ["DERIVATIVE_CONFIG", "RISK_CONFIG"]:
+        if k in ["DERIVATIVE_CONFIG", "RISK_CONFIG", "PENDING_CONFIG"]:
             try:
                 json.loads(v)   # validate JSON
             except Exception:
@@ -112,3 +137,4 @@ def update_runtime_config(data: dict):
     db.close()
     # ✅ Clear cache
     _runtime_cache = None
+

@@ -10,7 +10,7 @@ from app.services.pattern_service import detect_pattern
 from app.services.telegram_service import send_telegram
 
 from app.db.session import SessionLocal
-from app.db.models import Signal, SignalFeature  # ← CHANGED: gộp import
+from app.db.models import Signal, SignalFeature,PendingSignal  # ← CHANGED: gộp import
 
 from app.ml.predict import predict_prob
 from app.ml.features import build_features_from_row
@@ -19,6 +19,8 @@ from app.db.models import ScanConfig, ScanRun, ScanDebug
 from app.services.mtf_service import MTFCalculator
 from app.core.config import ENGINE_VERSION
 from app.services.derivatives_service import compute_derivative_bias
+from app.services.block_service import check_htf_atr_block,check_funding_block
+from app.services.block_service import HTF_BLOCK_CONFIG
 
 # ── Timeframe-based Weights dùng để tính score ───────────────────────────────
 
@@ -513,6 +515,9 @@ def scan_timeframe(db, timeframe, runtime_cfg):
         "duplicate_blocked":    0,
         "cooldown_blocked":     0,
         "ml_blocked":           0,
+        "htf_blocked":          0,
+        "funding_blocked":      0,
+        "pending_created":      0,
         "sent":                 0
     }
 
@@ -536,7 +541,9 @@ def scan_timeframe(db, timeframe, runtime_cfg):
 
             try:
                 # ================= DATA =================
-                df = get_klines_closed(symbol, interval=timeframe)
+                
+                lookback = HTF_BLOCK_CONFIG.get(timeframe, {}).get("lookback", 200)
+                df = get_klines_closed(symbol, interval=timeframe, limit=lookback)
 
                 if df is None or df.empty or len(df) < 3:
                     continue
@@ -744,13 +751,78 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     scan_stats["ml_blocked"] += 1
                     continue
 
-                # ================= CREATE SIGNAL =================
-                entry = float(last["close"])
+                # ================= HTF BLOCK: Kiểm tra nếu gia đã tăng quá hoặc giảm quá 25 30% thì ko Long Short đuổi nữa=================
+
+                # ================= HTF ATR BLOCK =================
+
+                block, reason = check_htf_atr_block(
+                    df=df,
+                    direction=direction,
+                    timeframe=timeframe
+                )
+
+                if block:
+                    debug.block_reason = f"HTF::{reason}"
+                    debug_rows[-1]["block_reason"] = f"HTF::{reason}"
+                    scan_stats["htf_blocked"] += 1
+                    continue
+
+
+                # ================= FUNDING BLOCK =================
+
+                block, reason = check_funding_block(
+                    symbol=symbol,
+                    direction=direction,
+                    timeframe=timeframe
+                )
+
+                if block:
+                    debug.block_reason = f"FUNDING::{reason}"
+                    debug_rows[-1]["block_reason"] = f"FUNDING::{reason}"
+                    scan_stats["funding_blocked"] += 1
+                    continue
+
+                # ============================================================
+                # ================= CREATE PENDING (FINAL) ===================
+                # ============================================================
+
+                pending_cfg = runtime_cfg.get("PENDING_CONFIG", {})
+
+                if not pending_cfg.get("enabled", False):
+                    continue  # nếu pending bị tắt thì skip (hoặc bạn có thể fallback market entry)
+
+                # ✅ BLOCK: nếu đã có pending WAIT cùng symbol + timeframe
+                existing_pending = db.query(PendingSignal).filter(
+                    PendingSignal.symbol == symbol,
+                    PendingSignal.timeframe == timeframe,
+                    PendingSignal.status == "WAIT"
+                ).first()
+
+                if existing_pending:
+                    debug.block_reason = "pending_exist"
+                    debug_rows[-1]["block_reason"] = "pending_exist"
+                    continue
+
                 atr_val = float(last["atr"])
+                close_price = float(last["close"])
 
                 if atr_val <= 0:
                     continue
 
+                # ✅ ATR ENTRY MULTIPLIER
+                atr_mult_entry = pending_cfg.get("atr_entry_multiplier", {}).get(timeframe, 0.5)
+                expire_hours = pending_cfg.get("expire_hours", {}).get(timeframe, 4)
+
+                # ================= ENTRY CALC =================
+
+                if direction == "LONG":
+                    trigger_price = close_price - atr_val * atr_mult_entry
+                else:
+                    trigger_price = close_price + atr_val * atr_mult_entry
+
+                # ================= SL / TP CALC FROM TRIGGER =================
+
+                """ SL tính theo ATR, chuyển lại ve fix%
                 risk_cfg = runtime_cfg.get("RISK_CONFIG", {}).get(
                     timeframe,
                     {"sl_mult": 1.5, "tp_mult": 3}
@@ -760,117 +832,89 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                 tp_mult = risk_cfg["tp_mult"]
 
                 if direction == "LONG":
-                    sl = entry - atr_val * sl_mult
-                    tp = entry + atr_val * tp_mult
+                    sl = trigger_price - atr_val * sl_mult
+                    tp = trigger_price + atr_val * tp_mult
                 else:
-                    sl = entry + atr_val * sl_mult
-                    tp = entry - atr_val * tp_mult
+                    sl = trigger_price + atr_val * sl_mult
+                    tp = trigger_price - atr_val * tp_mult
 
-                # ================= SNAPSHOT =================
                 rr = None
-                if entry != sl:
-                    rr = abs((tp - entry) / (entry - sl))
+                """
 
-                ema200 = last.get("ema200")
-                close_price = last.get("close")
+                risk_cfg = runtime_cfg.get("RISK_CONFIG", {}).get(
+                    timeframe,
+                    {"sl_mult": 0.02, "tp_mult": 0.04}
+                )
 
-                if pd.notna(ema200) and pd.notna(close_price) and ema200 != 0:
-                    ema_distance = float(close_price - ema200) / float(ema200)
+                sl_pct = risk_cfg["sl_mult"]
+                tp_pct = risk_cfg["tp_mult"]
+
+                if direction == "LONG":
+                    sl = trigger_price * (1 - sl_pct)
+                    tp = trigger_price * (1 + tp_pct)
                 else:
-                    ema_distance = 0.0
+                    sl = trigger_price * (1 + sl_pct)
+                    tp = trigger_price * (1 - tp_pct)
 
-                atr_ratio = None
-                if last.get("atr") and close_price and close_price != 0:
-                    atr_ratio = float(last["atr"]) / float(close_price)
+                rr = tp_pct / sl_pct if sl_pct > 0 else 2.0
 
-                # ================= SAVE SIGNAL =================
-                signal = Signal(
+                if trigger_price != sl:
+                    rr = abs((tp - trigger_price) / (trigger_price - sl))
+
+                expire_at = datetime.utcnow() + timedelta(hours=expire_hours)
+
+                # ================= CREATE FULL CONTEXT PENDING =================
+
+                pending = PendingSignal(
                     symbol=symbol,
                     timeframe=timeframe,
                     pattern=pattern,
                     strategy_name=strategy_name,
                     direction=direction,
-                    score=safe(score),
-                    entry_price=safe(entry),
-                    stop_loss=safe(sl),
-                    take_profit=safe(tp),
-                    rsi=safe(last.get("rsi")),
-                    volume_ratio=safe(
-                        last["volume"] / last["vol_ma"]
-                        if last.get("vol_ma") and last["vol_ma"] > 0 else None
-                    ),
-                    atr_ratio=safe(atr_ratio),
+
+                    # ===== SCORE =====
+                    signal_score=score,
+                    rule_score_raw=components.get("rule_score_raw"),
+                    derivative_bias=derivative_bias,
+
+                    trend_score=components.get("trend_score"),
+                    momentum_score=components.get("momentum_score"),
+                    volume_score=components.get("volume_score"),
+                    pattern_score=components.get("pattern_score"),
+                    mtf_score=components.get("mtf_score"),
+                    penalty=components.get("penalty_norm"),
+
+                    ml_prob=prob,
+
+                    # ===== SNAPSHOT =====
+                    indicators_snapshot=indicators_snapshot,
+                    candle_time=last["time"].to_pydatetime(),
+
+                    # ===== ENTRY DATA =====
+                    trigger_price=trigger_price,
+                    stop_loss=sl,
+                    take_profit=tp,
+                    rr=rr,
+                    atr_value=atr_val,
+                    atr_mult_entry=atr_mult_entry,
+
                     regime=regime,
-                    candle_time=last["time"].to_pydatetime()
+
+                    scan_id=scan_run.id,
+                    scan_debug_id=debug.id,
+
+                    expire_at=expire_at
                 )
 
-                db.add(signal)
-                db.flush()
-
-                # ✅ LINK DEBUG → SIGNAL
-                debug.signal_id = signal.id
-
-                # ================= SAVE FEATURE =================
-                feature = SignalFeature(
-                    signal_id=signal.id,
-                    rsi=safe(last.get("rsi")),
-                    volume_ratio=safe(
-                        last["volume"] / last["vol_ma"]
-                        if last.get("vol_ma") and last["vol_ma"] > 0 else None
-                    ),
-                    atr_ratio=safe(atr_ratio),
-                    regime=regime,
-                    trend_score=safe(components.get("trend_score")),
-                    momentum_score=safe(components.get("momentum_score")),
-                    volume_score=safe(components.get("volume_score")),
-                    ema_distance=safe(ema_distance if ema_distance is not None else 0),
-                    pattern_score=safe(components.get("pattern_score")),
-                    mtf_score=safe(components.get("mtf_score")),
-                    total_score=safe(score),
-                    penalty_norm=safe(components.get("penalty_norm")),
-                    rr=safe(rr)
-                )
-
-                db.add(feature)
-
-                # ✅ COMMIT 1 LẦN
+                db.add(pending)
                 db.commit()
 
-                scan_stats["sent"] += 1
+                print(f"🟡 PENDING CREATED: {symbol} {direction} @ {trigger_price:.4f}")
 
-                # ================= TELEGRAM =================
-                prob_text = f"{prob:.2f}" if prob is not None else "N/A"
-                rr_text = f"{rr:.2f}" if rr is not None else "N/A"
+                scan_stats["pending_created"] += 1
 
-                # ✅ 1. Tính Close Time (tránh hiểu nhầm trễ 15p)
-                duration_map = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440}
-                minutes = duration_map.get(timeframe, 15)
-                close_time = candle_time + timedelta(minutes=minutes)
-                local_time = to_local_time(close_time)
-
-                # ✅ 2. Thêm icon khung & tag confidence
-                tf_icon = {"15m": "⚡", "1h": "🕐", "4h": "🕓", "1d": "📅"}.get(timeframe, "🕒")
-                confidence_tag = " 🔥 HIGH CONF" if (prob is not None and prob >= 0.7) else ""
-                score_tag = " 🌟" if (score is not None and score >= 8) else ""
-
-                message = (
-                    f"🚨 <b>SIGNAL ALERT</b>{score_tag}\n\n"
-                    f"<b>Symbol:</b> {symbol}\n"
-                    f"<b>Timeframe:</b> {timeframe} {tf_icon}\n"
-                    f"<b>Pattern:</b> {pattern}\n"
-                    f"<b>Direction:</b> {direction}\n"
-                    f"<b>Regime:</b> {regime}\n"
-                    f"<b>Score:</b> {score}\n"
-                    #f"<b>AI Prob:</b> {prob_text}{confidence_tag}\n\n"
-                    f"<b>Entry:</b> {entry:.4f}\n"
-                    f"<b>Stop Loss:</b> {sl:.4f}\n"
-                    f"<b>Take Profit:</b> {tp:.4f}\n"
-                    f"<b>RR:</b> {rr_text}\n\n"
-                    f"<b>Candle Close (GMT+7):</b> {local_time}"
-                )
-
-                send_telegram(message)
-                print(f"✅ SENT: {symbol} | {pattern} | {direction} | Score={score}")
+                continue
+                #create_signal() # Fall back if want to continue Market Signal
 
             except Exception as e:
                 db.rollback()
@@ -979,13 +1023,16 @@ def scan_timeframe(db, timeframe, runtime_cfg):
     print("-" * 45)
     print("  Filtered out:")
     print(f"  📉 Score too low         : {scan_stats['score_reject']}  ({pct(scan_stats['score_reject'],        total_sym)})")
-    print(f"  🌊 Regime mismatch       : {scan_stats['regime_blocked']}  ({pct(scan_stats['regime_blocked'],      total_sym)})")
+    #print(f"  🌊 Regime mismatch       : {scan_stats['regime_blocked']}  ({pct(scan_stats['regime_blocked'],      total_sym)})")
     print(f"  🔒 Has open signal       : {scan_stats['open_signal_blocked']}  ({pct(scan_stats['open_signal_blocked'], total_sym)})")
     print(f"  ♻️  Duplicate candle      : {scan_stats['duplicate_blocked']}  ({pct(scan_stats['duplicate_blocked'],  total_sym)})")
     print(f"  ⏳ Cooldown active       : {scan_stats['cooldown_blocked']}  ({pct(scan_stats['cooldown_blocked'],    total_sym)})")
     print(f"  🤖 ML prob too low       : {scan_stats['ml_blocked']}  ({pct(scan_stats['ml_blocked'],          total_sym)})")
+    print(f"  🚫 HTF Block           : {scan_stats['htf_blocked']}  ({pct(scan_stats['htf_blocked'], total_sym)})")
+    print(f"  💰 Funding Block       : {scan_stats['funding_blocked']}  ({pct(scan_stats['funding_blocked'], total_sym)})")
+    print(f"   ✅ Pending Created     : {scan_stats['pending_created']}  ({pct(scan_stats['pending_created'], total_sym)})")
     print("-" * 45)
-    print(f"  ✅ Signal sent           : {passed}  ({pct(passed, total_sym)})")
+    #print(f"  Signal Pending           : {passed}  ({pct(passed, total_sym)})")
     print("=" * 45)
 
     # Warnings
