@@ -11,7 +11,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 # ENDPOINTS (2026)
 # =========================
 GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
 
 TIMEOUT_SECONDS = 12
 
@@ -122,3 +122,56 @@ Risk/Reward: 1:2
         return result
 
     return "⚠️ Hệ thống AI hiện không khả dụng."
+
+def generate_analysis_advice(analysis_data: dict):
+
+    prompt = f"""
+Bạn là một chuyên gia giao dịch định lượng sở trường thị trường Coin chuyên nghiệp.
+Hãy phân tích dữ liệu dưới đây theo phong cách Quant Risk Analysis.
+
+Không viết dài dòng. Trình bày 8–10 câu rõ ràng, súc tích.
+
+==============================
+SYMBOL: {analysis_data.get('symbol')}
+TIMEFRAME: {analysis_data.get('timeframe')}
+
+Regime: {analysis_data.get('regime')}
+ATR%: {analysis_data.get('atr_pct')}
+EMA Distance%: {analysis_data.get('ema_dist_pct')}
+Funding Rate: {analysis_data.get('funding_rate')}
+
+LONG Score: {analysis_data.get('long_score')}
+SHORT Score: {analysis_data.get('short_score')}
+
+HTF Block LONG: {analysis_data.get('long_htf_block')}
+HTF Block SHORT: {analysis_data.get('short_htf_block')}
+
+Funding Block LONG: {analysis_data.get('long_funding_block')}
+Funding Block SHORT: {analysis_data.get('short_funding_block')}
+
+Risk Model: Fixed SL with RR 1:2
+==============================
+
+Yêu cầu phân tích:
+
+1. So sánh rõ ràng LONG vs SHORT.
+2. Xác định thiên hướng (bias) nếu có.
+3. Đánh giá mức độ rủi ro dựa trên volatility (ATR%) và block status.
+4. Chỉ ra yếu tố có thể làm tín hiệu mất hiệu lực.
+5. Không đưa lời khuyên đầu tư tuyệt đối.
+
+Viết theo phong cách chuyên gia định lượng, trung lập, logic.
+"""
+
+    result = ask_gemini(prompt)
+    
+    if result:
+        return result
+    
+    result = ask_groq(prompt)
+    if result:
+        return result
+
+    
+
+    return "⚠️ AI hiện không khả dụng."
