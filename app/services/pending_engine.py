@@ -4,7 +4,7 @@ from app.db.session import SessionLocal
 from app.db.models import PendingSignal, Signal, SignalFeature, ScanDebug
 from app.services.binance_service import get_all_prices
 from app.services.telegram_service import send_telegram
-
+from app.services.signal_service import to_local_time
 
 def process_pending_signals():
 
