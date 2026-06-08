@@ -358,7 +358,7 @@ def dashboard(request: Request, page: int = 1,start_date: str = None,end_date: s
     # Risk Guard
     MAX_DD_ALERT = 15
     #risk_alert = abs(portfolio_stats["max_drawdown_percent"]) >= MAX_DD_ALERT
-    risk_alert = abs(strategy_stats["max_drawdown_percent"]) >= MAX_DD_ALERT
+    risk_alert = abs(strategy_stats.get("max_drawdown_percent", 0)) >= MAX_DD_ALERT
 
     # Open Positions
     price_map = get_all_prices()
