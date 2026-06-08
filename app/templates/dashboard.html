@@ -131,6 +131,19 @@
     position: relative;
   }
 
+  #recent-pagination button {
+    padding: 6px 10px;
+    margin: 0 2px;
+    border-radius: 4px;
+    border: 1px solid #333;
+    background: #222;
+    color: #ccc;
+    cursor: pointer;
+  }
+
+  #recent-pagination button:hover {
+    background: #444;
+  }
   /* Sticky header */
   .open-positions-table thead th {
     position: sticky;
@@ -616,6 +629,43 @@
               </select>
             </td>
           </tr>
+          <tr>
+            <td class="left"><code>ENABLE_SCHEDULER</code></td>
+            <td>
+              <select id="ENABLE_SCHEDULER">
+                <option value="true"  {% if config.ENABLE_SCHEDULER %}selected{% endif %}>true</option>
+                <option value="false" {% if not config.ENABLE_SCHEDULER %}selected{% endif %}>false</option>
+              </select>
+            </td>
+          </tr>
+
+          <tr>
+            <td class="left"><code>ENABLE_MONITOR</code></td>
+            <td>
+              <select id="ENABLE_MONITOR">
+                <option value="true"  {% if config.ENABLE_MONITOR %}selected{% endif %}>true</option>
+                <option value="false" {% if not config.ENABLE_MONITOR %}selected{% endif %}>false</option>
+              </select>
+            </td>
+          </tr>
+
+          <tr>
+            <td class="left"><code>DERIVATIVE_CONFIG</code></td>
+            <td>
+              <textarea id="DERIVATIVE_CONFIG" rows="8">
+          {{ config.DERIVATIVE_CONFIG | tojson(indent=2) }}
+              </textarea>
+            </td>
+          </tr>
+
+          <tr>
+            <td class="left"><code>RISK_CONFIG</code></td>
+            <td>
+              <textarea id="RISK_CONFIG" rows="8">
+          {{ config.RISK_CONFIG | tojson(indent=2) }}
+              </textarea>
+            </td>
+          </tr>
         </tbody>
       </table>
     </div>
@@ -906,6 +956,21 @@
 }
   /* ── Save Config ── */
   async function saveConfig() {
+
+    // ✅ Validate JSON trước
+    let derivative = document.getElementById("DERIVATIVE_CONFIG").value.trim();
+    let risk = document.getElementById("RISK_CONFIG").value.trim();
+
+    try {
+      JSON.parse(derivative);
+      JSON.parse(risk);
+    } catch (e) {
+      const el = document.getElementById("config-result");
+      el.innerText = "❌ JSON không hợp lệ: " + e.message;
+      el.style.color = "#ff5252";
+      return;
+    }
+    
     const payload = {
       BODY_RATIO_THRESHOLD: document.getElementById("BODY_RATIO_THRESHOLD").value,
       VOLUME_MULTIPLIER:    document.getElementById("VOLUME_MULTIPLIER").value,
@@ -915,7 +980,12 @@
       TOP_LIMIT:            document.getElementById("TOP_LIMIT").value,
       TIMEFRAME:            document.getElementById("TIMEFRAME").value,
       SCORE_THRESHOLD:      document.getElementById("SCORE_THRESHOLD").value,
-      MTF_ENABLED:          document.getElementById("MTF_ENABLED").value
+      MTF_ENABLED:          document.getElementById("MTF_ENABLED").value,
+      ENABLE_SCHEDULER:     document.getElementById("ENABLE_SCHEDULER").value,
+      ENABLE_MONITOR:       document.getElementById("ENABLE_MONITOR").value,
+      DERIVATIVE_CONFIG:    document.getElementById("DERIVATIVE_CONFIG").value.trim(),
+      RISK_CONFIG:          document.getElementById("RISK_CONFIG").value.trim()
+
     };
     const res = await fetch("/config", {
       method: "POST",
@@ -924,7 +994,14 @@
     });
     const data = await res.json();
     const el = document.getElementById("config-result");
-    el.innerText = data.status || "✅ Đã cập nhật";
+
+    if (!res.ok) {
+      el.innerText = "❌ " + data.detail;
+      el.style.color = "#ff5252";
+    } else {
+      el.innerText = data.status;
+      el.style.color = "#4caf50";
+    }
     setTimeout(() => { el.innerText = ""; }, 3000);
   }
 
@@ -1095,24 +1172,37 @@
     });
   }
 
-  function renderPagination() {
+function renderPagination() {
 
     const el = document.getElementById("recent-pagination");
+
+    if (!el) return;
+
     el.innerHTML = "";
 
-    if (totalPages <= 1) return;
+    if (!totalPages || totalPages <= 1) return;
 
-    // Prev
+    const windowSize = 2;
+
+    const startPage = Math.max(1, currentPage - windowSize);
+    const endPage = Math.min(totalPages, currentPage + windowSize);
+
+    // ===== FIRST =====
     if (currentPage > 1) {
         el.innerHTML += `
-            <button onclick="loadRecent(${currentPage-1})">
-                ⬅
-            </button>
+            <button onclick="loadRecent(1)">⏮ First</button>
         `;
     }
 
-    // Page numbers
-    for (let i = 1; i <= totalPages; i++) {
+    // ===== PREV =====
+    if (currentPage > 1) {
+        el.innerHTML += `
+            <button onclick="loadRecent(${currentPage - 1})">⬅</button>
+        `;
+    }
+
+    // ===== PAGE NUMBERS =====
+    for (let i = startPage; i <= endPage; i++) {
 
         el.innerHTML += `
             <button onclick="loadRecent(${i})"
@@ -1126,12 +1216,17 @@
         `;
     }
 
-    // Next
+    // ===== NEXT =====
     if (currentPage < totalPages) {
         el.innerHTML += `
-            <button onclick="loadRecent(${currentPage+1})">
-                ➡
-            </button>
+            <button onclick="loadRecent(${currentPage + 1})">➡</button>
+        `;
+    }
+
+    // ===== LAST =====
+    if (currentPage < totalPages) {
+        el.innerHTML += `
+            <button onclick="loadRecent(${totalPages})">Last ⏭</button>
         `;
     }
 }

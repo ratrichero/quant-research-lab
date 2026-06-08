@@ -42,12 +42,14 @@ Câu hỏi của người dùng:
 Hãy phân tích chi tiết, dễ hiểu, mang tính chuyên môn nhưng thân thiện.
 """
 
+    result = ask_gemini(prompt)
+    if result:
+        return {"answer": result}
+    
     result = ask_groq(prompt)
     if result:
         return {"answer": result}
 
-    result = ask_gemini(prompt)
-    if result:
-        return {"answer": result}
+    
 
     return {"answer": "Hiện tại hệ thống AI không khả dụng."}

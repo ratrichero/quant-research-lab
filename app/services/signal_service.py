@@ -427,7 +427,7 @@ def run_market_scan_multi_tf():
         if now.minute in [1, 16, 31, 46]:
             scan_timeframe(db, "15m", runtime_cfg)
 
-        if now.minute == 6:
+        if now.minute == 5:
             scan_timeframe(db, "1h", runtime_cfg)
 
         if now.minute == 10 and now.hour % 4 == 0:
