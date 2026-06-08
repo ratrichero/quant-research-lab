@@ -23,8 +23,8 @@ from app.api.config import router as config_router
 from app.api.monitor_trade import router as monitor_trade_router
 from app.services.config_service import get_runtime_config
 
-time_scheduler = 1000
-time_monitor = 500
+time_scheduler = 1
+time_monitor = 5
 # ==============================
 # 1️⃣ Scheduler Market Scan
 # ==============================
