@@ -11,6 +11,7 @@ import os, json
 from app.services.binance_service import get_all_prices
 from sqlalchemy import desc, asc
 from app.analytics.portfolio_engine import run_portfolio_simulation
+import numpy as np
 
 router = APIRouter()
 
@@ -319,7 +320,25 @@ def dashboard(request: Request, page: int = 1,start_date: str = None,end_date: s
             closed_trades,
             PORTFOLIO_CONFIG
         )
+        # ✅ Strategy-based equity override (chỉ để hiển thị chart)
 
+        returns = np.array([float(t.result_percent) / 100 for t in closed_trades])
+
+        equity = [INITIAL_CAPITAL]
+        for r in returns:
+            equity.append(equity[-1] * (1 + r))
+
+        equity = np.array(equity)
+
+        labels = [str(i) for i in range(len(equity))]
+
+        peaks = np.maximum.accumulate(equity)
+        drawdowns = (equity - peaks) / peaks * 100
+
+        # ✅ QUAN TRỌNG: convert lại thành list
+        equity = equity.tolist()
+        drawdowns = drawdowns.tolist()
+        """ Dùng cho Postion Sizing cũ
         labels = [ts.strftime("%Y-%m-%d") for ts in timestamps]
 
         peaks = []
@@ -332,13 +351,14 @@ def dashboard(request: Request, page: int = 1,start_date: str = None,end_date: s
         drawdowns = [
             round((equity[i] - peaks[i]) / peaks[i] * 100, 2)
             for i in range(len(equity))
-        ]
+        ]"""
 
         no_data = False
 
     # Risk Guard
     MAX_DD_ALERT = 15
-    risk_alert = abs(portfolio_stats["max_drawdown_percent"]) >= MAX_DD_ALERT
+    #risk_alert = abs(portfolio_stats["max_drawdown_percent"]) >= MAX_DD_ALERT
+    risk_alert = abs(strategy_stats["max_drawdown_percent"]) >= MAX_DD_ALERT
 
     # Open Positions
     price_map = get_all_prices()

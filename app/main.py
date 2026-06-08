@@ -23,6 +23,8 @@ from app.api.config import router as config_router
 from app.api.monitor_trade import router as monitor_trade_router
 from app.services.config_service import get_runtime_config
 
+time_scheduler = 1000
+time_monitor = 500
 # ==============================
 # 1️⃣ Scheduler Market Scan
 # ==============================
@@ -49,7 +51,7 @@ async def scheduler_loop():
             except Exception as e:
                 print(f"[SCAN ERROR] {e}")
 
-        await asyncio.sleep(1)
+        await asyncio.sleep(time_scheduler)
 
 
 # ==============================
@@ -74,7 +76,7 @@ async def monitor_loop():
             print(f"[MONITOR ERROR] {e}")
 
         elapsed = (datetime.now() - start).total_seconds()
-        sleep_time = max(0, 5 - elapsed)
+        sleep_time = max(0, time_monitor - elapsed)
         await asyncio.sleep(sleep_time)
 
 
