@@ -162,7 +162,7 @@ def process_pending_signals():
                 )
 
                 send_telegram(message)
-                print(f"✅ PENDING FILLED: {p.symbol} | {p.pattern} | {p.direction} | Score={p.signal_score}")
+                print(f"✅ PENDING FILLED: {p.symbol} | {p.trigger_price:.4f} | {p.pattern} | {p.direction} | Score={p.signal_score}")
 
             except Exception as e:
                 db.rollback()
