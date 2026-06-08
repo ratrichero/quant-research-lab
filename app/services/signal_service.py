@@ -487,6 +487,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
     "regime_penalty": 0.3,
     "weight_profile": "default_v1",
     "score_scaling": "linear_v1",
+    "signal": "trigger_price",
     "indicator_snapshot_version": 1,
     "snapshot_features": ["ema50", "ema200", "ema200_slope", "rsi", "rsi_slope", "atr_percentile", "bb_width"],
     "derivative": {"enabled": True,"pre_buffer": pre_buffer,"bias_scale": bias_scale_map}
@@ -804,7 +805,16 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                     continue
 
                 atr_val = float(last["atr"])
-                close_price = float(last["close"])
+                #close_price = float(last["close"])
+                from app.services.binance_service import get_all_prices
+
+                price_map = get_all_prices()
+                current_price = price_map.get(symbol)
+
+                if not current_price:
+                    continue
+
+                close_price = float(current_price)
 
                 if atr_val <= 0:
                     continue

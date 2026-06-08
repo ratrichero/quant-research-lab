@@ -10,3 +10,4 @@ xgboost==2.0.3
 scikit-learn==1.4.2
 joblib==1.4.2
 jinja2
+python-telegram-bot==13.15
