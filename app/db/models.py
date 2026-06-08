@@ -94,6 +94,8 @@ class TradeOutcomeAnalytics(Base):
     trend_score = Column(Numeric)
     mtf_score = Column(Numeric)
     penalty_norm = Column(Numeric)
+    time_to_mae = Column(Integer, nullable=True)
+    time_to_mfe = Column(Integer, nullable=True)
 
     exit_reason = Column(String)
 

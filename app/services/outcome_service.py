@@ -1,5 +1,6 @@
 from app.services.binance_service import get_klines
 from app.db.models import TradeOutcomeAnalytics
+from datetime import timedelta
 
 
 def save_trade_outcome(db, trade, feature):
@@ -16,58 +17,66 @@ def save_trade_outcome(db, trade, feature):
     take_profit = float(trade.take_profit)
     result_percent = float(trade.result_percent)
 
-    from datetime import timedelta
-
-    # ✅ Tính duration (phút)
+    # ✅ Duration
     duration_minutes = (
         (trade.exit_time - trade.created_at).total_seconds() / 60
     )
 
-    # ✅ Hybrid interval
-    if duration_minutes < 180:
-        interval = "1m"
-    elif duration_minutes < 2880:  # < 2 ngày
-        interval = "5m"
-    elif duration_minutes < 10080:  # < 7 ngày
-        interval = "15m"
-    else:
-        interval = "1h"
+    # ✅ ALWAYS use 1m for precise MAE/MFE
+    interval = "1m"
 
     df = get_klines(
         symbol=trade.symbol,
         interval=interval,
         start_time=trade.created_at,
-        end_time=trade.exit_time + timedelta(minutes=1),  # buffer nhẹ
+        end_time=trade.exit_time + timedelta(minutes=1),
         limit=1500
     )
 
     mae = None
     mfe = None
+    time_to_mae = None
+    time_to_mfe = None
 
     if not df.empty:
 
-        if trade.direction == "LONG":
-            mae = min((row["low"] - entry) / entry * 100 for _, row in df.iterrows())
-            mfe = max((row["high"] - entry) / entry * 100 for _, row in df.iterrows())
-        else:
-            mae = min((entry - row["high"]) / entry * 100 for _, row in df.iterrows())
-            mfe = max((entry - row["low"]) / entry * 100 for _, row in df.iterrows())
+        df = df[df["time"] <= trade.exit_time]
+
+        if not df.empty:
+
+            if trade.direction == "LONG":
+                drawdowns = ((df["low"] - entry) / entry * 100)
+                runups = ((df["high"] - entry) / entry * 100)
+            else:
+                drawdowns = ((entry - df["high"]) / entry * 100)
+                runups = ((entry - df["low"]) / entry * 100)
+
+            mae = round(float(drawdowns.min()), 4)
+            mfe = round(float(runups.max()), 4)
+
+            # ✅ Time to MAE
+            mae_idx = drawdowns.idxmin()
+            mae_time = df.loc[mae_idx, "time"]
+            time_to_mae = int((mae_time - trade.created_at).total_seconds() / 60)
+
+            # ✅ Time to MFE
+            mfe_idx = runups.idxmax()
+            mfe_time = df.loc[mfe_idx, "time"]
+            time_to_mfe = int((mfe_time - trade.created_at).total_seconds() / 60)
 
     # ✅ RR planned
     rr_planned = None
     if entry != stop_loss:
-        rr_planned = abs((take_profit - entry) / (entry - stop_loss))
+        rr_planned = round(abs((take_profit - entry) / (entry - stop_loss)), 4)
 
     # ✅ RR realized
     rr_realized = None
     if rr_planned and rr_planned != 0:
         risk_percent = abs((stop_loss - entry) / entry * 100)
         if risk_percent != 0:
-            rr_realized = result_percent / risk_percent
+            rr_realized = round(result_percent / risk_percent, 4)
 
-    time_to_exit = int(
-        (trade.exit_time - trade.created_at).total_seconds() / 60
-    )
+    time_to_exit = int(duration_minutes)
 
     analytics = TradeOutcomeAnalytics(
         signal_id=trade.id,
@@ -90,6 +99,8 @@ def save_trade_outcome(db, trade, feature):
         max_drawdown=mae,
         max_favorable=mfe,
         time_to_exit=time_to_exit,
+        time_to_mae=time_to_mae,
+        time_to_mfe=time_to_mfe,
 
         volatility_at_entry=float(feature.atr_ratio) if feature.atr_ratio else None,
         volume_ratio_at_entry=float(feature.volume_ratio) if feature.volume_ratio else None,

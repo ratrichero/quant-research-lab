@@ -8,21 +8,29 @@ def close_trade(db, trade, current_price, reason):
         return
 
     entry = float(trade.entry_price)
-    current_price = float(current_price)
 
-    if trade.direction == "LONG":
-        trade.result_percent = ((current_price - entry) / entry) * 100
-    else:
-        trade.result_percent = ((entry - current_price) / entry) * 100
-
-    if reason == "TP":
-        trade.status = "WIN"
-    elif reason == "SL":
+    # ✅ Xác định exit_price theo lý thuyết
+    if reason == "SL":
+        exit_price = float(trade.stop_loss)
         trade.status = "LOSS"
+    elif reason == "TP":
+        exit_price = float(trade.take_profit)
+        trade.status = "WIN"
     else:
-        trade.status = "WIN" if trade.result_percent > 0 else "LOSS"
+        exit_price = float(current_price)
+        trade.status = "WIN" if (
+            (exit_price - entry > 0 and trade.direction == "LONG") or
+            (entry - exit_price > 0 and trade.direction == "SHORT")
+        ) else "LOSS"
 
-    trade.exit_price = float(current_price)
+    trade.exit_price = exit_price
+
+    # ✅ Tính return dựa trên exit_price đã chuẩn hóa
+    if trade.direction == "LONG":
+        trade.result_percent = ((exit_price - entry) / entry) * 100
+    else:
+        trade.result_percent = ((entry - exit_price) / entry) * 100
+
     trade.exit_reason = reason
     trade.exit_time = datetime.utcnow()
 
