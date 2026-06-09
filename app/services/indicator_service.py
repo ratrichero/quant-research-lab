@@ -532,6 +532,21 @@ def build_indicator_snapshot(df: pd.DataFrame) -> dict:
     if bb_mid is not None and bb_upper is not None and bb_lower is not None:
         if bb_mid != 0:
             bb_width = (bb_upper - bb_lower) / bb_mid
+    
+    # ================= VOLUME Ratio=================
+
+    volume_ratio = None
+    vol_ma = safe_float(last.get("vol_ma"))
+    volume = safe_float(last.get("volume"))
+
+    if vol_ma is not None and volume is not None and vol_ma > 0:
+        volume_ratio = volume / vol_ma
+
+    # ================= ATR RATIO =================
+
+    atr_ratio = None
+    if atr is not None and close is not None and close > 0:
+        atr_ratio = atr / close
 
     # ================= FINAL SNAPSHOT =================
 
@@ -546,6 +561,9 @@ def build_indicator_snapshot(df: pd.DataFrame) -> dict:
         # Momentum
         "rsi": rsi,
         "rsi_slope": rsi_slope,
+
+        "volume_ratio": volume_ratio,
+        "atr_ratio": atr_ratio,
 
         # Volatility
         "atr": atr,

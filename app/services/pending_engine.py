@@ -117,7 +117,7 @@ def process_pending_signals():
                     trend_score=p.trend_score,
                     momentum_score=p.momentum_score,
                     volume_score=p.volume_score,
-                    ema_distance=None,
+                    ema_distance=p.indicators_snapshot.get("ema_distance"),
                     pattern_score=p.pattern_score,
                     mtf_score=p.mtf_score,
                     total_score=p.signal_score,
