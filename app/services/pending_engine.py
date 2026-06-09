@@ -101,7 +101,7 @@ def process_pending_signals():
                     atr_ratio=p.indicators_snapshot.get("atr_ratio") if p.indicators_snapshot else None,
                     regime=p.regime,
                     candle_time=p.candle_time,
-                    engine_version= p.indicators_snapshot.get("engine_version")
+                    engine_version=p.indicators_snapshot.get("engine_version", 2) if p.indicators_snapshot else 2
                 )
 
                 db.add(signal)
