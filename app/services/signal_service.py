@@ -544,6 +544,10 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                 # ================= DATA =================
                 
                 lookback = HTF_BLOCK_CONFIG.get(timeframe, {}).get("lookback", 200)
+                
+                # ✅ FIX: đảm bảo tối thiểu 50 để vol_ma(20) và atr(14) warm-up đủ
+                lookback = max(lookback, 50)
+                
                 df = get_klines_closed(symbol, interval=timeframe, limit=lookback)
 
                 if df is None or df.empty or len(df) < 3:
