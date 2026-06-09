@@ -563,6 +563,9 @@ def build_indicator_snapshot(df: pd.DataFrame) -> dict:
     if atr is not None and close is not None and close > 0:
         atr_ratio = atr / close
 
+    # Tạm thêm vào build_indicator_snapshot để debug
+    print(f"DEBUG vol_ma={last.get('vol_ma')}, volume={last.get('volume')}, atr={last.get('atr')}, close={last.get('close')}")
+
     # ================= FINAL SNAPSHOT =================
 
     return {
