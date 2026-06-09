@@ -30,10 +30,10 @@ from app.services.config_service import get_runtime_config
 from app.bot.telegram_bot import run_bot
 from app.core.config import TELEGRAM_TOKEN
 
-#TELEGRAM_TOKEN1 ="1978783052:AAHfh4GsvGu_Po9YOgcHaKVTe_t9ICIOkik"
-TELEGRAM_TOKEN1 =TELEGRAM_TOKEN
-time_scheduler = 1
-time_monitor = 5
+TELEGRAM_TOKEN1 ="1978783052:AAHfh4GsvGu_Po9YOgcHaKVTe_t9ICIOkik"
+#TELEGRAM_TOKEN1 =TELEGRAM_TOKEN
+time_scheduler = 1000
+time_monitor = 5000
 
 
 scan_queue = Queue()
