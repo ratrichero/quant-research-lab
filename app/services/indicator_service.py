@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 from typing import Optional, Dict, Literal
+from app.core.config import ENGINE_VERSION
 
 # ============================================================================
 # 🔧 PHẦN NÀY LÀ INTERNAL - BẠN KHÔNG CẦN QUAN TÂM
@@ -35,8 +36,11 @@ class _TechnicalIndicatorsEngine:
         gains = delta.where(delta > 0, 0.0)
         losses = -delta.where(delta < 0, 0.0)
         
-        avg_gain = gains.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
-        avg_loss = losses.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+        #avg_gain = gains.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+        #avg_loss = losses.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+
+        avg_gain = gains.ewm(alpha=1/period, min_periods=1, adjust=False).mean()
+        avg_loss = losses.ewm(alpha=1/period, min_periods=1, adjust=False).mean()
         
         rs = avg_gain / avg_loss.replace(0, np.nan)
         return 100 - (100 / (1 + rs))
@@ -564,7 +568,7 @@ def build_indicator_snapshot(df: pd.DataFrame) -> dict:
         atr_ratio = atr / close
 
     # Tạm thêm vào build_indicator_snapshot để debug
-    print(f"DEBUG vol_ma={last.get('vol_ma')}, volume={last.get('volume')}, atr={last.get('atr')}, close={last.get('close')}")
+    # print(f"DEBUG vol_ma={last.get('vol_ma')}, volume={last.get('volume')}, atr={last.get('atr')}, close={last.get('close')}")
 
     # ================= FINAL SNAPSHOT =================
 
@@ -587,4 +591,6 @@ def build_indicator_snapshot(df: pd.DataFrame) -> dict:
         "atr": atr,
         "atr_percentile": atr_percentile,
         "bb_width": bb_width,
+        
+        "engine_version": ENGINE_VERSION,
     }
