@@ -5,6 +5,8 @@ from app.db.models import PendingSignal, Signal, SignalFeature, ScanDebug
 from app.services.binance_service import get_all_prices
 from app.services.telegram_service import send_telegram
 from app.services.signal_service import to_local_time
+from app.core.config import ENGINE_VERSION
+
 
 def process_pending_signals():
 
@@ -98,7 +100,8 @@ def process_pending_signals():
                     volume_ratio=p.indicators_snapshot.get("volume_ratio") if p.indicators_snapshot else None,
                     atr_ratio=p.indicators_snapshot.get("atr_ratio") if p.indicators_snapshot else None,
                     regime=p.regime,
-                    candle_time=p.candle_time
+                    candle_time=p.candle_time,
+                    engine_version= ENGINE_VERSION
                 )
 
                 db.add(signal)

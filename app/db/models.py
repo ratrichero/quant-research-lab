@@ -37,6 +37,8 @@ class Signal(Base):
 
     strategy_name = Column(String, nullable=False)
 
+    engine_version = Column(Numeric)
+
 class SignalFeature(Base):
     __tablename__ = "signal_features"
 
