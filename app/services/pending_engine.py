@@ -5,6 +5,7 @@ from app.db.models import PendingSignal, Signal, SignalFeature, ScanDebug
 from app.services.binance_service import get_all_prices
 from app.services.telegram_service import send_telegram
 from app.services.signal_service import to_local_time
+from app.services.btc_context_cache import (get_or_build_hourly_snapshot,build_event_context,)
 
 
 
@@ -86,6 +87,11 @@ def process_pending_signals():
                     continue
 
                 # ================= CREATE SIGNAL =================
+
+                btc_snapshot = get_or_build_hourly_snapshot()
+                btc_price_now = price_map.get("BTCUSDT")
+                entry_context = build_event_context(btc_snapshot, btc_price_now)
+
                 signal = Signal(
                     symbol=p.symbol,
                     timeframe=p.timeframe,
@@ -101,7 +107,8 @@ def process_pending_signals():
                     atr_ratio=p.indicators_snapshot.get("atr_ratio") if p.indicators_snapshot else None,
                     regime=p.regime,
                     candle_time=p.candle_time,
-                    engine_version=p.indicators_snapshot.get("engine_version", 2) if p.indicators_snapshot else 2
+                    engine_version=p.indicators_snapshot.get("engine_version", 2) if p.indicators_snapshot else 2,
+                    market_context = {"entry": entry_context}
                 )
 
                 db.add(signal)

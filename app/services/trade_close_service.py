@@ -1,6 +1,8 @@
 from datetime import datetime
 from app.db.models import SignalFeature
 from app.services.outcome_service import save_trade_outcome
+from app.services.btc_context_cache import (get_or_build_hourly_snapshot,build_event_context,)
+from app.services.binance_service import get_all_prices
 
 
 def close_trade(db, trade, current_price, reason):
@@ -55,6 +57,22 @@ def close_trade(db, trade, current_price, reason):
     trade.status = "WIN" if trade.result_percent > 0 else "LOSS"
 
     trade.exit_time = datetime.utcnow()
+
+   
+    # ============================================================
+    # 2️⃣ Thêm Market Context 
+    # ============================================================
+
+    price_map = get_all_prices()
+    btc_price_now = price_map.get("BTCUSDT")
+
+    btc_snapshot = get_or_build_hourly_snapshot()
+    exit_context = build_event_context(btc_snapshot, btc_price_now)
+
+    if trade.market_context:
+        trade.market_context["exit"] = exit_context
+    else:
+        trade.market_context = {"exit": exit_context}
 
     feature = db.query(SignalFeature).filter(
         SignalFeature.signal_id == trade.id

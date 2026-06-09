@@ -1,3 +1,5 @@
+# /app/db/models.py
+
 from sqlalchemy.sql import func
 from app.db.session import Base
 from sqlalchemy import Column, BigInteger, Numeric, Integer, String, ForeignKey, DateTime,Float,Boolean,JSON
@@ -38,6 +40,7 @@ class Signal(Base):
     strategy_name = Column(String, nullable=False)
 
     engine_version = Column(Numeric)
+    market_context = Column(JSON, nullable=True)
 
 class SignalFeature(Base):
     __tablename__ = "signal_features"
@@ -218,3 +221,17 @@ class PendingSignal(Base):
     filled_at = Column(DateTime)
 
     created_at = Column(DateTime, default=datetime.utcnow)
+
+class MarketData(Base):
+    __tablename__ = "market_data"
+
+    id = Column(BigInteger, primary_key=True)
+    symbol = Column(String, nullable=False)
+    timeframe = Column(String, nullable=False)
+    time = Column(DateTime, nullable=False)
+    open = Column(Numeric)
+    high = Column(Numeric)
+    low = Column(Numeric)
+    close = Column(Numeric)
+    volume = Column(Numeric)
+    created_at = Column(DateTime, server_default=func.now())
