@@ -173,9 +173,54 @@
   <p style="color:#888;">⏳ Chưa có lệnh đóng.</p>
   {% endif %}
 
-  {% if risk_alert %}
-  <div class="alert">⚠️ Risk Alert: Drawdown vượt ngưỡng an toàn!</div>
+  <!-- ═══════════════════════════════════════════
+     RISK MONITOR
+═══════════════════════════════════════════ -->
+<!--
+{% if not no_data %}
+
+  {% if risk_level == "DANGER" %}
+    <div class="alert" style="background:#ff1744;">
+      🚨 <b>DANGER</b> – Portfolio Risk vượt ngưỡng an toàn<br>
+      Max DD: {{ portfolio_dd }}% |
+      Sharpe: {{ portfolio_stats.sharpe_ratio }} |
+      Risk Efficiency: {{ risk_efficiency }}
+    </div>
+
+  {% elif risk_level == "WARNING" %}
+    <div class="alert" style="background:#ff9800;">
+      ⚠️ <b>WARNING</b> – Risk đang gia tăng<br>
+      Portfolio DD: {{ portfolio_dd }}% |
+      Strategy DD: {{ strategy_dd }}%
+    </div>
+
+  {% elif risk_level == "SAFE" %}
+    <div class="alert" style="background:#2e7d32;">
+      ✅ <b>SAFE</b> – Risk đang trong vùng kiểm soát
+    </div>
   {% endif %}
+
+
+  <Risk Model Diagnostic >
+  {% if risk_model_status == "POSITIVE" %}
+    <div class="alert" style="background:#1b5e20;">
+      ✅ Risk Model đang cải thiện Drawdown
+      <br>
+      Improvement: {{ dd_improvement_pct }}%
+      (Δ {{ dd_delta }}%)
+    </div>
+
+  {% elif risk_model_status == "WARNING" %}
+    <div class="alert" style="background:#bf360c;">
+      ⚠️ Risk Model làm Drawdown xấu hơn Strategy
+      <br>
+      Degradation: {{ dd_improvement_pct }}%
+      (Δ {{ dd_delta }}%)
+    </div>
+  {% endif %}
+
+{% endif %}
+  -->
 
   <!-- ═══════════════════════════════════════════
        OVERVIEW METRICS
@@ -183,62 +228,50 @@
 
   <!-- ═══════Strategy Metrics════════════ -->
 
-  <div class="section">
-  <h3 class="section-title">🧠 Strategy Metrics (Trade-Level)</h3>
-  <div class="metric-grid">
+<div class="section">
+<h3 class="section-title">🧠 Strategy Metrics (Trade-Level)</h3>
+<div class="metric-grid">
 
-    <div class="metric">
-      <div class="metric-label">Total Trades</div>
-      <div class="metric-value">{{ strategy_stats.total_trades }}</div>
-    </div>
-
-    <div class="metric">
-      <div class="metric-label">Winrate</div>
-      <div class="metric-value">
-        {{ strategy_stats.winrate_percent }}%
-      </div>
-    </div>
-
-    <div class="metric">
-      <div class="metric-label">Profit Factor</div>
-      <div class="metric-value">
-        {{ strategy_stats.profit_factor }}
-      </div>
-    </div>
-
-    <div class="metric">
-      <div class="metric-label">Expectancy</div>
-      <div class="metric-value">
-        {{ strategy_stats.expectancy_percent }}%
-      </div>
-    </div>
-
-    <div class="metric">
-      <div class="metric-label">Sharpe (Trade)</div>
-      <div class="metric-value">
-        {{ strategy_stats.sharpe_ratio }}
-      </div>
-    </div>
-
-    <div class="metric">
-      <div class="metric-label">Max Losing Streak</div>
-      <div class="metric-value">
-        {{ strategy_stats.max_consecutive_losses }}
-      </div>
-    </div>
-
-    <div class="metric">
-      <div class="metric-label">Max Win Streak</div>
-      <div class="metric-value">
-        {{ strategy_stats.max_consecutive_wins }}
-      </div>
-    </div>
-
+  <div class="metric">
+    <div class="metric-label">Total Trades</div>
+    <div class="metric-value">{{ strategy_stats.total_trades }}</div>
   </div>
+
+  <div class="metric">
+    <div class="metric-label">Winrate</div>
+    <div class="metric-value">{{ strategy_stats.winrate_percent }}%</div>
+  </div>
+
+  <div class="metric">
+    <div class="metric-label">Profit Factor</div>
+    <div class="metric-value">{{ strategy_stats.profit_factor }}</div>
+  </div>
+
+  <div class="metric">
+    <div class="metric-label">Expectancy</div>
+    <div class="metric-value">{{ strategy_stats.expectancy_percent }}%</div>
+  </div>
+
+  <div class="metric">
+    <div class="metric-label">Sharpe (Trade)</div>
+    <div class="metric-value">{{ strategy_stats.sharpe_ratio }}</div>
+  </div>
+
+  <div class="metric">
+    <div class="metric-label">Max Losing Streak</div>
+    <div class="metric-value">{{ strategy_stats.max_consecutive_losses }}</div>
+  </div>
+
+  <div class="metric">
+    <div class="metric-label">Max Win Streak</div>
+    <div class="metric-value">{{ strategy_stats.max_consecutive_wins }}</div>
+  </div>
+
+</div>
 </div>
 
 <!-- ═══════Portfolio Metrics════════════ -->
-<div class="section" style="display:none;">
+<div class="section">
   <h3 class="section-title">💰 Portfolio Metrics (Capital-Level)</h3>
   <div class="metric-grid">
 
@@ -249,36 +282,74 @@
 
     <div class="metric">
       <div class="metric-label">Final NAV</div>
+      <div class="metric-value">{{ portfolio_stats.final_nav }}</div>
+    </div>
+
+    <div class="metric">
+      <div class="metric-label">Total Return</div>
+      <div class="metric-value">{{ portfolio_stats.total_return_percent }}%</div>
+    </div>
+
+    <div class="metric">
+      <div class="metric-label">Max Drawdown</div>
+      <div class="metric-value">{{ portfolio_stats.max_drawdown_percent }}%</div>
+    </div>
+
+    <div class="metric">
+      <div class="metric-label">Calmar</div>
+      <div class="metric-value">{{ portfolio_stats.calmar_ratio }}</div>
+    </div>
+
+    <div class="metric">
+      <div class="metric-label">Sharpe (Portfolio)</div>
+      <div class="metric-value">{{ portfolio_stats.sharpe_ratio }}</div>
+    </div>
+
+    <div class="metric">
+      <div class="metric-label">Risk Efficiency</div>
+      <div class="metric-value"
+           style="color:{% if risk_efficiency >= 1 %}#4caf50{% else %}#ff5252{% endif %};">
+        {{ risk_efficiency }}
+      </div>
+    </div>
+
+  </div>
+</div>
+<!-- ═══════Portfolio Metrics Fix Size════════════ -->
+<div class="section">
+  <h3 class="section-title">
+    📦 Fixed Portfolio ({{ fixed_size }}$ per trade)
+  </h3>
+
+  <div class="metric-grid">
+
+    <div class="metric">
+      <div class="metric-label">Final NAV</div>
       <div class="metric-value">
-        {{ portfolio_stats.final_nav }}
+        {{ fixed_stats.final_nav }}
       </div>
     </div>
 
     <div class="metric">
       <div class="metric-label">Total Return</div>
-      <div class="metric-value">
-        {{ portfolio_stats.total_return_percent }}%
+      <div class="metric-value"
+           style="color:{% if fixed_stats.total_return_percent >= 0 %}#4caf50{% else %}#ff5252{% endif %};">
+        {{ fixed_stats.total_return_percent }}%
       </div>
     </div>
 
     <div class="metric">
       <div class="metric-label">Max Drawdown</div>
-      <div class="metric-value">
-        {{ portfolio_stats.max_drawdown_percent }}%
+      <div class="metric-value"
+           style="color:#ff5252;">
+        {{ fixed_stats.max_drawdown_percent }}%
       </div>
     </div>
 
     <div class="metric">
-      <div class="metric-label">Calmar</div>
+      <div class="metric-label">Sharpe</div>
       <div class="metric-value">
-        {{ portfolio_stats.calmar_ratio }}
-      </div>
-    </div>
-
-    <div class="metric">
-      <div class="metric-label">Sharpe (Portfolio)</div>
-      <div class="metric-value">
-        {{ portfolio_stats.sharpe_ratio }}
+        {{ fixed_stats.sharpe_ratio }}
       </div>
     </div>
 
@@ -328,9 +399,12 @@
        EQUITY CURVE
 ═══════════════════════════════════════════ -->
 <div class="section">
+
   <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:nowrap;">
 
-    <h3 class="section-title" style="margin:0;">📈 Equity Curve</h3>
+    <h3 class="section-title" style="margin:0;">
+      📈 Equity & Portfolio Controls
+    </h3>
 
     <form method="get" action="/dashboard"
           style="display:flex;gap:12px;align-items:center;white-space:nowrap;">
@@ -351,15 +425,21 @@
         <label style="font-size:12px;">TF</label>
         <select name="tf">
           <option value="">All</option>
-          <option value="15m"
-            {% if request.query_params.get('tf') == '15m' %}selected{% endif %}>15m</option>
-          <option value="1h"
-            {% if request.query_params.get('tf') == '1h' %}selected{% endif %}>1h</option>
-          <option value="4h"
-            {% if request.query_params.get('tf') == '4h' %}selected{% endif %}>4h</option>
-          <option value="1d"
-            {% if request.query_params.get('tf') == '1d' %}selected{% endif %}>1d</option>
+          <option value="15m" {% if request.query_params.get('tf') == '15m' %}selected{% endif %}>15m</option>
+          <option value="1h"  {% if request.query_params.get('tf') == '1h' %}selected{% endif %}>1h</option>
+          <option value="4h"  {% if request.query_params.get('tf') == '4h' %}selected{% endif %}>4h</option>
+          <option value="1d"  {% if request.query_params.get('tf') == '1d' %}selected{% endif %}>1d</option>
         </select>
+      </div>
+
+      <div style="display:flex;flex-direction:column;">
+        <label style="font-size:12px;">Fixed Trade ($)</label>
+        <input type="number"
+               name="fixed_size"
+               value="{{ fixed_size }}"
+               min="1"
+               step="1"
+               style="width:110px;">
       </div>
 
       <button type="submit" style="margin-top:14px;">Apply</button>
@@ -371,6 +451,7 @@
   <div class="chart-box h300" style="margin-top:15px;">
     <canvas id="equityChart"></canvas>
   </div>
+
 </div>
 
   <!-- ═══════════════════════════════════════════
@@ -799,14 +880,32 @@
     type: 'line',
     data: {
       labels: {{ labels | safe }},
-      datasets: [{
-        label: 'Equity',
-        data: {{ equity | safe }},
-        borderColor: 'rgb(75,192,192)',
-        backgroundColor: 'rgba(75,192,192,0.08)',
-        fill: true, tension: 0.3,
-        pointRadius: 4, pointHoverRadius: 6, borderWidth: 2
-      }]
+      datasets: [
+      {
+          label: 'Portfolio (Risk Model)',
+          data: {{ equity | safe }},
+          borderColor: 'rgb(255,165,0)',
+          fill: false,
+          tension: 0.3,
+          borderWidth: 2
+      },
+      {
+          label: 'Strategy (Full Compounding)',
+          data: {{ strategy_equity | safe }},
+          borderColor: 'rgb(75,192,192)',
+          fill: false,
+          tension: 0.3,
+          borderWidth: 2
+      },
+      {
+          label: 'Portfolio (Fixed 100$ per trade)',
+          data: {{ fixed_equity | safe }},
+          borderColor: 'rgb(156,39,176)',
+          fill: false,
+          tension: 0.3,
+          borderWidth: 2
+      }
+      ]
     },
     options: {
       responsive: true, maintainAspectRatio: false,
@@ -822,14 +921,26 @@
     type: 'line',
     data: {
       labels: {{ labels | safe }},
-      datasets: [{
-        label: 'Drawdown (%)',
-        data: {{ drawdowns | safe }},
+      datasets: [
+      {
+        label: 'Drawdown Strategy',
+        data: {{ drawdown_strategy | safe }},
+        borderColor: 'rgb(75,192,192)',
+        backgroundColor: 'rgba(75,192,192,0.08)',
+        fill: false,
+        tension: 0.3,
+        borderWidth: 2
+      },
+      {
+        label: 'Drawdown Portfolio',
+        data: {{ drawdown_portfolio | safe }},
         borderColor: 'rgb(255,82,82)',
         backgroundColor: 'rgba(255,82,82,0.08)',
-        fill: true, tension: 0.3,
-        pointRadius: 4, pointHoverRadius: 6, borderWidth: 2
-      }]
+        fill: false,
+        tension: 0.3,
+        borderWidth: 2
+      }
+    ]
     },
     options: {
       responsive: true, maintainAspectRatio: false,

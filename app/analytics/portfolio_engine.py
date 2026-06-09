@@ -7,7 +7,7 @@ import numpy as np
 def calculate_position_size(nav, entry, sl, risk_per_trade):
     sl_distance = abs(entry - sl)
     if sl_distance <= 0:
-        return 0, 0
+        return 0, 0,0
 
     risk_amount = nav * risk_per_trade
     position_size = risk_amount / sl_distance
@@ -32,6 +32,7 @@ def run_portfolio_simulation(trades, config):
 
     # ==== 1️⃣ Tạo event timeline ====
     events = []
+    
 
     for t in trades:
         if not t.created_at:
@@ -43,6 +44,18 @@ def run_portfolio_simulation(trades, config):
             events.append(("CLOSE", t.exit_time, t))
 
     events.sort(key=lambda x: x[1])
+
+    if not events:
+        return [initial_capital], [], {
+            "final_nav": initial_capital,
+            "total_return_percent": 0,
+            "sharpe_ratio": 0,
+            "sortino_ratio": 0,
+            "calmar_ratio": 0,
+            "max_drawdown_percent": 0,
+            "max_consecutive_losses": 0,
+            "total_trades": len(trades)
+        }
 
     # ==== 2️⃣ Loop theo timeline ====
     for event_type, ts, trade in events:
@@ -100,9 +113,13 @@ def run_portfolio_simulation(trades, config):
                     break
 
         # ==== Update NAV ====
-        unrealized = 0  # (backtest offline nên bỏ qua MTM)
+        #unrealized = 0  # (backtest offline nên bỏ qua MTM)
+        #nav = cash + unrealized
 
-        nav = cash + unrealized
+        # ==== Update NAV (Corrected) ====
+
+        position_value = sum(p["capital_used"] for p in open_positions)
+        nav = cash + position_value
 
         equity_curve.append(nav)
         timestamps.append(ts)
@@ -131,8 +148,10 @@ def run_portfolio_simulation(trades, config):
         sortino = mean_return / downside_std
 
     # ✅ Drawdown
-    peaks = np.maximum.accumulate(equity_curve)
-    drawdowns = (equity_curve - peaks) / peaks
+    equity_array = np.array(equity_curve)
+
+    peaks = np.maximum.accumulate(equity_array)
+    drawdowns = (equity_array - peaks) / peaks
     max_dd = np.min(drawdowns) * 100
 
     # ✅ Total Return
@@ -172,7 +191,67 @@ def run_portfolio_simulation(trades, config):
         "max_drawdown_percent": round(max_dd, 2),
         "max_consecutive_losses": max_losing_streak,
         "total_trades": len(trades)
-    }
+    }   
 
     return equity_curve, timestamps, stats
 
+def run_fixed_portfolio_simulation(trades, config):
+
+    initial_capital = config.get("initial_capital", 10000)
+    fixed_size = config.get("fixed_trade_size", 100)
+
+    nav = initial_capital
+    equity_curve = [nav]
+    timestamps = []
+
+    # Sắp xếp theo exit_time (vì chỉ quan tâm lệnh đã đóng)
+    closed_trades = [
+        t for t in trades
+        if hasattr(t, "result_percent") and t.result_percent is not None and t.exit_time
+    ]
+
+    closed_trades.sort(key=lambda t: t.exit_time)
+
+    for t in closed_trades:
+
+        pnl = fixed_size * (float(t.result_percent) / 100.0)
+        nav += pnl
+
+        equity_curve.append(nav)
+        timestamps.append(t.exit_time)
+
+    # ===== Metrics =====
+
+    if len(equity_curve) > 1:
+        returns = np.diff(equity_curve) / equity_curve[:-1]
+    else:
+        returns = np.array([0])
+
+    mean_return = np.mean(returns)
+    std_return = np.std(returns)
+
+    sharpe = mean_return / std_return if std_return != 0 else 0
+
+    equity_array = np.array(equity_curve)
+    peaks = np.maximum.accumulate(equity_array)
+    drawdowns = (equity_array - peaks) / peaks
+    max_dd = np.min(drawdowns) * 100
+
+    total_return = (
+        (equity_curve[-1] / initial_capital - 1) * 100
+        if equity_curve else 0
+    )
+
+    calmar = (total_return / 100) / abs(max_dd / 100) if max_dd != 0 else 0
+
+    stats = {
+        "final_nav": round(equity_curve[-1], 2),
+        "total_return_percent": round(total_return, 2),
+        "sharpe_ratio": round(sharpe, 3),
+        "calmar_ratio": round(calmar, 3),
+        "max_drawdown_percent": round(max_dd, 2),
+        "total_trades": len(closed_trades),
+        "fixed_trade_size": fixed_size
+    }
+
+    return equity_curve, timestamps, stats

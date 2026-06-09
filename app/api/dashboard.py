@@ -10,7 +10,7 @@ from jinja2 import Environment, FileSystemLoader
 import os, json
 from app.services.binance_service import get_all_prices
 from sqlalchemy import desc, asc
-from app.analytics.portfolio_engine import run_portfolio_simulation
+from app.analytics.portfolio_engine import run_portfolio_simulation,run_fixed_portfolio_simulation
 import numpy as np
 
 router = APIRouter()
@@ -28,9 +28,12 @@ def close_all_positions():
     db = SessionLocal()
 
     try:
-        open_trades = db.query(Signal).filter(
-            Signal.status == "OPEN"
-        ).all()
+        open_trades = (
+            db.query(Signal)
+            .filter(Signal.status == "OPEN")
+            .with_for_update()
+            .all()
+        )
 
         if not open_trades:
             return {"status": "no_open_trades"}
@@ -194,20 +197,19 @@ def api_recent_closed(
         db.close()
 
 @router.get("/dashboard", response_class=HTMLResponse)
-def dashboard(request: Request, page: int = 1,start_date: str = None,end_date: str = None,tf: str = None):
-    
+def dashboard(request: Request,page: int = 1,start_date: str = None,end_date: str = None,tf: str = None,fixed_size: float = Query(100, ge=1)):
+
     selected_tf = tf
     start_dt = None
     end_dt = None
-
+    
     if start_date:
         start_dt = datetime.strptime(start_date, "%Y-%m-%d")
 
     if end_date:
-        end_dt = datetime.strptime(end_date, "%Y-%m-%d")
+        end_dt = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
 
     cfg = get_runtime_config()
-
     db = SessionLocal()
 
     query = db.query(Signal).filter(Signal.status.in_(["WIN", "LOSS"]))
@@ -226,31 +228,33 @@ def dashboard(request: Request, page: int = 1,start_date: str = None,end_date: s
     open_trades = db.query(Signal).filter(
         Signal.status == "OPEN"
     ).order_by(Signal.candle_time.desc()).all()
-    
 
     recent_closed = (
         db.query(Signal)
         .filter(Signal.status.in_(["WIN", "LOSS"]))
-        .order_by(Signal.exit_time.desc())   # sắp xếp theo giờ đóng mới nhất
+        .order_by(Signal.exit_time.desc())
         .limit(50)
         .all()
-        
     )
 
     PER_PAGE = 10
     total_recent = len(recent_closed)
-
     start = (page - 1) * PER_PAGE
     end = start + PER_PAGE
-
     recent_page = recent_closed[start:end]
-
     total_pages = (total_recent + PER_PAGE - 1) // PER_PAGE
 
     db.close()
-    # ================= PERFORMANCE =================
 
     INITIAL_CAPITAL = 10000
+   
+    # ===== DEFAULT RISK VALUES =====
+    strategy_dd = 0
+    portfolio_dd = 0
+    risk_level = "SAFE"
+    risk_model_status = "NEUTRAL"
+    dd_delta = 0
+    dd_improvement_pct = 0
 
     if not closed_trades:
 
@@ -262,6 +266,7 @@ def dashboard(request: Request, page: int = 1,start_date: str = None,end_date: s
             "sharpe_ratio": 0,
             "max_consecutive_losses": 0,
             "max_consecutive_wins": 0,
+            "total_return_percent": 0
         }
 
         portfolio_stats = {
@@ -273,41 +278,30 @@ def dashboard(request: Request, page: int = 1,start_date: str = None,end_date: s
             "sortino_ratio": 0,
         }
 
-        weekly_stats = strategy_stats
-        monthly_stats = strategy_stats
-
-        equity = [INITIAL_CAPITAL]
+        strategy_equity = [INITIAL_CAPITAL]
+        portfolio_equity = [INITIAL_CAPITAL]
         labels = ["0"]
         drawdowns = [0]
-
+        strategy_sharpe = 0
+        portfolio_sharpe = 0
+        risk_efficiency = 0
         no_data = True
 
     else:
 
         # ===== STRATEGY METRICS =====
         strategy_stats = calculate_performance(closed_trades)
+        strategy_sharpe = strategy_stats.get("sharpe_ratio", 0)
 
-        # Weekly / Monthly (trade-level)
+        # ===== WEEK / MONTH =====
         cutoff_week = datetime.utcnow() - timedelta(days=7)
         cutoff_month = datetime.utcnow() - timedelta(days=30)
 
-        weekly_trades = [
-            t for t in closed_trades if t.candle_time >= cutoff_week
-        ]
+        weekly_trades = [t for t in closed_trades if t.candle_time >= cutoff_week]
+        monthly_trades = [t for t in closed_trades if t.candle_time >= cutoff_month]
 
-        monthly_trades = [
-            t for t in closed_trades if t.candle_time >= cutoff_month
-        ]
-
-        weekly_stats = (
-            calculate_performance(weekly_trades)
-            if weekly_trades else strategy_stats
-        )
-
-        monthly_stats = (
-            calculate_performance(monthly_trades)
-            if monthly_trades else strategy_stats
-        )
+        weekly_stats = calculate_performance(weekly_trades) if weekly_trades else strategy_stats
+        monthly_stats = calculate_performance(monthly_trades) if monthly_trades else strategy_stats
 
         # ===== PORTFOLIO METRICS =====
         PORTFOLIO_CONFIG = {
@@ -316,55 +310,109 @@ def dashboard(request: Request, page: int = 1,start_date: str = None,end_date: s
             "max_portfolio_risk": 0.10
         }
 
-        equity, timestamps, portfolio_stats = run_portfolio_simulation(
+        portfolio_equity, timestamps, portfolio_stats = run_portfolio_simulation(
             closed_trades,
             PORTFOLIO_CONFIG
         )
-        # ✅ Strategy-based equity override (chỉ để hiển thị chart)
+        print("Fixed size:", fixed_size, type(fixed_size))
+        # ===== FIXED PORTFOLIO (100$ per trade) =====
+        FIXED_CONFIG = {
+            "initial_capital": INITIAL_CAPITAL,
+            "fixed_trade_size": fixed_size
+        }
 
+        fixed_equity, fixed_timestamps, fixed_stats = run_fixed_portfolio_simulation(
+            closed_trades,
+            FIXED_CONFIG
+        )
+
+        #portfolio_equity = portfolio_equity.tolist()
+        portfolio_sharpe = portfolio_stats.get("sharpe_ratio", 0)
+
+        # ===== STRATEGY EQUITY (NO SIZING) =====
         returns = np.array([float(t.result_percent) / 100 for t in closed_trades])
 
-        equity = [INITIAL_CAPITAL]
+        strategy_equity = [INITIAL_CAPITAL]
         for r in returns:
-            equity.append(equity[-1] * (1 + r))
+            strategy_equity.append(strategy_equity[-1] * (1 + r))
 
-        equity = np.array(equity)
+        strategy_equity = strategy_equity
 
-        labels = [str(i) for i in range(len(equity))]
+        # ===== Labels =====
+        labels = [str(i) for i in range(len(strategy_equity))]
 
-        peaks = np.maximum.accumulate(equity)
-        drawdowns = (equity - peaks) / peaks * 100
+        # ===== Drawdown Strategy =====
+        strategy_peaks = np.maximum.accumulate(strategy_equity)
+        drawdown_strategy = (
+            (np.array(strategy_equity) - strategy_peaks) / strategy_peaks * 100
+        ).tolist()
 
-        # ✅ QUAN TRỌNG: convert lại thành list
-        equity = equity.tolist()
-        drawdowns = drawdowns.tolist()
-        """ Dùng cho Postion Sizing cũ
-        labels = [ts.strftime("%Y-%m-%d") for ts in timestamps]
+        # ===== Drawdown Portfolio =====
+        portfolio_peaks = np.maximum.accumulate(portfolio_equity)
+        drawdown_portfolio = (
+            (np.array(portfolio_equity) - portfolio_peaks) / portfolio_peaks * 100
+        ).tolist()
 
-        peaks = []
-        max_peak = equity[0]
+        strategy_dd = round(min(drawdown_strategy), 2)
+        portfolio_dd = round(min(drawdown_portfolio), 2)
 
-        for val in equity:
-            max_peak = max(max_peak, val)
-            peaks.append(max_peak)
+        # ═══════════════════════════════
+        # RISK MODEL DIAGNOSTIC
+        # ═══════════════════════════════
 
-        drawdowns = [
-            round((equity[i] - peaks[i]) / peaks[i] * 100, 2)
-            for i in range(len(equity))
-        ]"""
+        dd_delta = round(abs(strategy_dd) - abs(portfolio_dd), 2)
+
+        if strategy_dd != 0:
+            dd_improvement_pct = round((dd_delta / abs(strategy_dd)) * 100, 2)
+        else:
+            dd_improvement_pct = 0
+
+        if dd_delta > 0:
+            risk_model_status = "POSITIVE"
+        elif dd_delta < 0:
+            risk_model_status = "WARNING"
+        else:
+            risk_model_status = "NEUTRAL"
+
+
+        # ═══════════════════════════════
+        # GLOBAL RISK LEVEL
+        # ═══════════════════════════════
+
+        if abs(portfolio_dd) >= 20 or portfolio_sharpe < 0:
+            risk_level = "DANGER"
+
+        elif (
+            abs(portfolio_dd) >= 15
+            or abs(portfolio_dd) > abs(strategy_dd)
+            or portfolio_sharpe < 0.5
+        ):
+            risk_level = "WARNING"
+
+        else:
+            risk_level = "SAFE"
+        
+
+        # ===== Risk Efficiency =====
+        strategy_return = strategy_stats.get("total_return_percent", 0)
+        portfolio_return = portfolio_stats.get("total_return_percent", 0)
+
+        risk_efficiency = 0
+        if strategy_return != 0:
+            risk_efficiency = round(portfolio_return / strategy_return, 3)
 
         no_data = False
 
-    # Risk Guard
+    # ===== Risk Guard =====
     MAX_DD_ALERT = 15
-    #risk_alert = abs(portfolio_stats["max_drawdown_percent"]) >= MAX_DD_ALERT
-    risk_alert = abs(strategy_stats.get("max_drawdown_percent", 0)) >= MAX_DD_ALERT
+    #risk_alert = abs(strategy_stats.get("max_drawdown_percent", 0)) >= MAX_DD_ALERT
+    risk_alert = abs(portfolio_dd) >= MAX_DD_ALERT # cảnh báo dựa trên vốn thực
 
-    # Open Positions
+    # ===== Open Positions =====
     price_map = get_all_prices()
     open_positions = []
+
     for t in open_trades:
-       
         entry = float(t.entry_price)
         current = float(price_map.get(t.symbol, entry))
         pnl = ((current-entry)/entry)*100 if t.direction=="LONG" else ((entry-current)/entry)*100
@@ -380,7 +428,7 @@ def dashboard(request: Request, page: int = 1,start_date: str = None,end_date: s
             "color": "#4caf50" if pnl>=0 else "#ff5252"
         })
 
-    # Pattern Breakdown
+    # ===== Pattern Breakdown =====
     pattern_map = {}
     for t in closed_trades:
         pattern_map.setdefault(t.pattern, []).append(t)
@@ -396,7 +444,7 @@ def dashboard(request: Request, page: int = 1,start_date: str = None,end_date: s
             "profit_factor": stats["profit_factor"]
         })
 
-    # Regime Breakdown
+    # ===== Regime Breakdown =====
     regime_map = {}
     for t in closed_trades:
         regime_map.setdefault(t.regime, []).append(t)
@@ -413,29 +461,40 @@ def dashboard(request: Request, page: int = 1,start_date: str = None,end_date: s
         })
 
     template = env.get_template("dashboard.html")
-    #print("WEEKLY:", weekly_stats)
-    #print("MONTHLY:", monthly_stats)
+
     html = template.render(
         timedelta=timedelta,
         strategy_stats=strategy_stats,
         portfolio_stats=portfolio_stats,
-        equity=json.dumps(equity),
+        equity=json.dumps(portfolio_equity),
+        strategy_equity=json.dumps(strategy_equity),
         labels=json.dumps(labels),
-        drawdowns=json.dumps(drawdowns),
+        #drawdowns=json.dumps(drawdowns),
+        strategy_sharpe=strategy_sharpe,
+        portfolio_sharpe=portfolio_sharpe,
+        risk_efficiency=risk_efficiency,
         no_data=no_data,
-        #rolling_sharpe=rolling_sharpe,
         weekly_stats=weekly_stats,
         monthly_stats=monthly_stats,
-        risk_alert=risk_alert,
         open_positions=open_positions,
-        #recent_closed=recent_closed,
         pattern_stats=pattern_stats,
         regime_stats=regime_stats,
         config=cfg,
         recent_closed=recent_page,
         page=page,
         total_pages=total_pages,
+        drawdown_strategy=json.dumps(drawdown_strategy),
+        drawdown_portfolio=json.dumps(drawdown_portfolio),
+        strategy_dd=strategy_dd,
+        portfolio_dd=portfolio_dd,
+        risk_level=risk_level,
+        risk_model_status=risk_model_status,
+        dd_delta=dd_delta,
+        dd_improvement_pct=dd_improvement_pct,
         request=request,
+        fixed_equity=json.dumps(fixed_equity),
+        fixed_size=fixed_size,
+        fixed_stats=fixed_stats,
     )
 
     return HTMLResponse(html)
@@ -471,8 +530,9 @@ def manual_close(signal_id: int):
         #print("COMMIT DONE")
 
     except Exception as e:
-        print("ERROR BEFORE COMMIT:", e)
         db.rollback()
+        db.close()
+        return {"status": "error", "message": str(e)}
     finally:
         db.close()
 
