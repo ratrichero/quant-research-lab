@@ -55,12 +55,13 @@ class _TechnicalIndicatorsEngine:
             'lc': low_close
         }).max(axis=1)
         
-        return true_range.ewm(alpha=1/period, min_periods=period, adjust=False).mean()
+        return true_range.ewm(alpha=1/period, min_periods=1, adjust=False).mean()
     
     def calculate_volume_ma(self, df: pd.DataFrame) -> pd.Series:
         """Volume MA calculation"""
         period = self.config['volume_ma_period']
-        return df['volume'].rolling(window=period, min_periods=period).mean()
+        #return df['volume'].rolling(window=period, min_periods=period).mean()
+        return df['volume'].rolling(window=period, min_periods=1).mean()
 
 
 # ============================================================================
@@ -539,13 +540,27 @@ def build_indicator_snapshot(df: pd.DataFrame) -> dict:
     vol_ma = safe_float(last.get("vol_ma"))
     volume = safe_float(last.get("volume"))
 
+    # ✅ FIX: fallback tính vol_ma trực tiếp nếu bị NaN
+    if vol_ma is None and len(df) >= 5:
+        vol_ma = safe_float(df["volume"].rolling(window=min(20, len(df)), min_periods=1).mean().iloc[-1])
+
     if vol_ma is not None and volume is not None and vol_ma > 0:
         volume_ratio = volume / vol_ma
 
     # ================= ATR RATIO =================
 
     atr_ratio = None
-    if atr and close and close > 0:
+    atr = safe_float(last.get("atr"))
+    
+    # ✅ FIX: fallback tính atr trực tiếp nếu bị NaN
+    if atr is None and len(df) >= 2:
+        high_low = df["high"] - df["low"]
+        high_close = (df["high"] - df["close"].shift(1)).abs()
+        low_close = (df["low"] - df["close"].shift(1)).abs()
+        tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+        atr = safe_float(tr.ewm(alpha=1/14, min_periods=1, adjust=False).mean().iloc[-1])
+
+    if atr is not None and close is not None and close > 0:
         atr_ratio = atr / close
 
     # ================= FINAL SNAPSHOT =================
