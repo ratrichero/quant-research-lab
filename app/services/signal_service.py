@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 import time
 import traceback
 
-from app.services.binance_service import get_top_symbols, get_klines,get_klines_closed
+from app.services.binance_service import get_top_symbols, get_klines,get_klines_closed,get_binance_server_time
 from app.services.indicator_service import add_indicators, add_indicators_advanced, detect_regime, detect_regime_advanced, get_market_state,build_indicator_snapshot
 from app.services.pattern_service import detect_pattern
 from app.services.telegram_service import send_telegram
@@ -505,6 +505,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
     SCORE_THRESHOLD = runtime_cfg["SCORE_THRESHOLD"]
     BATCH_SIZE      = 100
     BATCH_SLEEP     = 1
+    server_now = get_binance_server_time()
 
     scan_stats = {
         "timeframe":            timeframe,
@@ -548,7 +549,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                 # ✅ FIX: đảm bảo tối thiểu 50 để vol_ma(20) và atr(14) warm-up đủ
                 lookback = max(lookback, 50)
                 
-                df = get_klines_closed(symbol, interval=timeframe, limit=lookback)
+                df = get_klines_closed(symbol, interval=timeframe, limit=lookback,server_now=server_now)
 
                 if df is None or df.empty or len(df) < 3:
                     continue
@@ -582,7 +583,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                         if symbol not in trend_cache:
 
                             raw_trend = get_klines_closed(
-                                symbol, interval=trend_tf, limit=250
+                                symbol, interval=trend_tf, limit=250,server_now=server_now
                             )
 
                             if raw_trend is not None and len(raw_trend) >= 50:
@@ -597,7 +598,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
                         if symbol not in context_cache:
 
                             raw_ctx = get_klines_closed(
-                                symbol, interval=context_tf, limit=250
+                                symbol, interval=context_tf, limit=250,server_now=server_now
                             )
 
                             if raw_ctx is not None and len(raw_ctx) >= 50:

@@ -166,7 +166,7 @@ def get_candle_duration(interval: str):
 
     return mapping[interval]
 
-def get_klines_closed(symbol, limit=300, interval=None, start_time=None, end_time=None):
+def get_klines_closed(symbol, limit=300, interval=None, start_time=None, end_time=None,server_now=None):
 
     df = get_klines(
         symbol=symbol,
@@ -179,7 +179,9 @@ def get_klines_closed(symbol, limit=300, interval=None, start_time=None, end_tim
     if df.empty:
         return df
 
-    server_now = get_binance_server_time()
+    if server_now is None:
+        server_now = get_binance_server_time()
+        
     duration = get_candle_duration(interval)
 
     # ✅ chỉ giữ candle đã đóng
