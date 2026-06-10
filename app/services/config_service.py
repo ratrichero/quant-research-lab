@@ -14,6 +14,7 @@ DEFAULTS = {
     "TOP_LIMIT": "400",
     "ENABLE_SCHEDULER": "true",
     "ENABLE_MONITOR": "true",
+    "ENGINE_VERSION": "1.0",
     "RISK_CONFIG": json.dumps({
             "15m": {"sl_mult": 1.5, "tp_mult": 3},
             "1h":  {"sl_mult": 1.8, "tp_mult": 3.5},
@@ -106,6 +107,7 @@ def get_runtime_config(force_reload=False):
         "ENABLE_MONITOR": config.get("ENABLE_MONITOR", "true").lower() == "true",
         "DERIVATIVE_CONFIG": derivative_cfg,
         "RISK_CONFIG": risk_cfg,
+        "ENGINE_VERSION": float(config.get("ENGINE_VERSION", DEFAULTS["ENGINE_VERSION"])),
         "PENDING_CONFIG": pending_cfg,
     }
     

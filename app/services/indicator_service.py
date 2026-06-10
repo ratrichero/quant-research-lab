@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 from typing import Optional, Dict, Literal
-from app.core.config import ENGINE_VERSION
 
 # ============================================================================
 # 🔧 PHẦN NÀY LÀ INTERNAL - BẠN KHÔNG CẦN QUAN TÂM
@@ -473,7 +472,7 @@ if __name__ == "__main__":
     for key, value in state.items():
         print(f"  {key:20s}: {value}")
 
-def build_indicator_snapshot(df: pd.DataFrame) -> dict:
+def build_indicator_snapshot(df: pd.DataFrame,engine_version: float) -> dict:
     """
     Minimal Quant Snapshot (Research-Grade, Not Overfit)
 
@@ -592,5 +591,5 @@ def build_indicator_snapshot(df: pd.DataFrame) -> dict:
         "atr_percentile": atr_percentile,
         "bb_width": bb_width,
         
-        "engine_version": ENGINE_VERSION,
+        "engine_version": engine_version,
     }

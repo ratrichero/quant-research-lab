@@ -820,6 +820,13 @@
           </tr>
 
           <tr>
+            <td class="left"><code>ENGINE_VERSION</code></td>
+            <td>
+              <input id="ENGINE_VERSION" value="{{ config.ENGINE_VERSION }}">
+            </td>
+          </tr>
+
+          <tr>
             <td class="left"><code>DERIVATIVE_CONFIG</code></td>
             <td>
               <textarea id="DERIVATIVE_CONFIG" rows="8">
@@ -1183,6 +1190,7 @@
       MTF_ENABLED:          document.getElementById("MTF_ENABLED").value,
       ENABLE_SCHEDULER:     document.getElementById("ENABLE_SCHEDULER").value,
       ENABLE_MONITOR:       document.getElementById("ENABLE_MONITOR").value,
+      ENGINE_VERSION:       document.getElementById("ENGINE_VERSION").value,
       DERIVATIVE_CONFIG:    document.getElementById("DERIVATIVE_CONFIG").value.trim(),
       RISK_CONFIG:          document.getElementById("RISK_CONFIG").value.trim()
 

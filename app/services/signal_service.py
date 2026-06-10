@@ -4,7 +4,7 @@ from datetime import datetime, timezone, timedelta
 import time
 import traceback
 
-from app.services.binance_service import get_top_symbols, get_klines,get_klines_closed,get_binance_server_time
+from app.services.binance_service import get_top_symbols, get_klines,get_klines_closed,get_binance_server_time,get_all_prices
 from app.services.indicator_service import add_indicators, add_indicators_advanced, detect_regime, detect_regime_advanced, get_market_state,build_indicator_snapshot
 from app.services.pattern_service import detect_pattern
 from app.services.telegram_service import send_telegram
@@ -17,10 +17,9 @@ from app.ml.features import build_features_from_row
 from app.services.llm_router import generate_explanation
 from app.db.models import ScanConfig, ScanRun, ScanDebug
 from app.services.mtf_service import MTFCalculator
-from app.core.config import ENGINE_VERSION
 from app.services.derivatives_service import compute_derivative_bias
-from app.services.block_service import check_htf_atr_block,check_funding_block
-from app.services.block_service import HTF_BLOCK_CONFIG
+from app.services.block_service import check_htf_atr_block,check_funding_block,HTF_BLOCK_CONFIG
+from app.services.config_service import get_runtime_config
 
 # ── Timeframe-based Weights dùng để tính score ───────────────────────────────
 
@@ -411,7 +410,7 @@ def in_cooldown(db, symbol, timeframe, hours=4):
 # ============================================================
 
 def run_market_scan_multi_tf():
-    from app.services.config_service import get_runtime_config
+    
 
     runtime_cfg = get_runtime_config()
     
@@ -437,8 +436,7 @@ def run_market_scan_multi_tf():
 
 
 def run_market_scan_single_tf(timeframe):
-    from app.services.config_service import get_runtime_config
-
+    
     runtime_cfg = get_runtime_config()
 
     print(f"\n🚀 Running SINGLE TF scan: {timeframe}")
@@ -471,7 +469,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
     db.commit()
     db.refresh(config)
 
-    
+    engine_version = runtime_cfg.get("ENGINE_VERSION")
     deriv_cfg = runtime_cfg.get("DERIVATIVE_CONFIG", {})
     pre_buffer = deriv_cfg.get("pre_buffer", 1)
     bias_scale_map = deriv_cfg.get("bias_scale", {
@@ -480,7 +478,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
         "4h": 1.0
     })
     engine_metadata = {
-    "engine_version": ENGINE_VERSION,
+    "engine_version": engine_version,
     "mtf_version": 2.1,
     "mtf_structure": "2-layer ATR normalized",
     "regime_mode": "penalty",
@@ -654,7 +652,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
 
                 # ================= INDICATOR SNAPSHOT =================
 
-                indicators_snapshot = build_indicator_snapshot(df)
+                indicators_snapshot = build_indicator_snapshot(df,engine_version)
 
                 # ================= CREATE DEBUG (DB) =================
                 debug = ScanDebug(
@@ -811,8 +809,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
 
                 atr_val = float(last["atr"])
                 #close_price = float(last["close"])
-                from app.services.binance_service import get_all_prices
-
+                
                 price_map = get_all_prices()
                 current_price = price_map.get(symbol)
 
