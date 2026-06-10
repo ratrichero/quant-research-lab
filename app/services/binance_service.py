@@ -1,71 +1,116 @@
 import requests
 import pandas as pd
+import time
 from app.core.config import BINANCE_BASE
-from functools import lru_cache
+
+# ✅ GLOBAL SESSION (reuse connection)
+_session = requests.Session()
+
+# ✅ OPTIONAL: Retry adapter (production safe)
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+
+retry_strategy = Retry(
+    total=3,
+    backoff_factor=1,
+    status_forcelist=[429, 500, 502, 503, 504],
+)
+
+adapter = HTTPAdapter(max_retries=retry_strategy)
+_session.mount("https://", adapter)
+_session.mount("http://", adapter)
+
+# ✅ CACHE
+_valid_symbols_cache = None
+_valid_symbols_ts = 0
+VALID_SYMBOLS_TTL = 3600  # 1 giờ
 
 
+# ─────────────────────────────────────────────
+# PRICE MAP
+# ─────────────────────────────────────────────
 def get_all_prices():
-  
+
     url = f"{BINANCE_BASE}/fapi/v1/ticker/price"
 
     try:
-        data = requests.get(url, timeout=5).json()
+        response = _session.get(url, timeout=5)
+        response.raise_for_status()
+        data = response.json()
     except Exception as e:
-        print(f"Error fetching exchangeInfo: {e}")
-        return []
-
-    if not isinstance(data, list):
-        print("Unexpected response:", data)
+        print(f"[PRICE ERROR] {e}")
         return {}
 
-    price_map = {item["symbol"]: float(item["price"]) for item in data}
-    return price_map
+    if not isinstance(data, list):
+        return {}
 
+    return {item["symbol"]: float(item["price"]) for item in data}
+
+
+# ─────────────────────────────────────────────
+# VALID SYMBOLS (CACHED)
+# ─────────────────────────────────────────────
 def get_valid_symbols():
 
+    global _valid_symbols_cache, _valid_symbols_ts
+
+    now = time.time()
+
+    if _valid_symbols_cache and (now - _valid_symbols_ts < VALID_SYMBOLS_TTL):
+        return _valid_symbols_cache
+
     url = f"{BINANCE_BASE}/fapi/v1/exchangeInfo"
-    
+
     try:
-        data = requests.get(url, timeout=10).json()
+        response = _session.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
     except Exception as e:
-        print(f"Error fetching exchangeInfo: {e}")
+        print(f"[EXCHANGE INFO ERROR] {e}")
+
+        if _valid_symbols_cache:
+            return _valid_symbols_cache
+
         return []
 
     symbols = []
-    
-    blacklist_keywords = ["NVDA", "TSLA", "AAPL", "AMZN", "META", "MSFT", "GOOG", "NFLX", "USD", "EUR", "GBP", "XAU"]
 
-    for s in data["symbols"]:
+    for s in data.get("symbols", []):
 
         if (
-            s["contractType"] == "PERPETUAL"
-            and s["quoteAsset"] == "USDT"
-            and s["status"] == "TRADING"
+            s.get("contractType") == "PERPETUAL"
+            and s.get("quoteAsset") == "USDT"
+            and s.get("status") == "TRADING"
+            and s.get("underlyingType") == "COIN"
         ):
-            base = s["baseAsset"]
+            base = s.get("baseAsset", "")
 
-            # Kiểm tra nếu là stock token (thường có các từ khóa trong blacklist)
-            if any(keyword in base for keyword in blacklist_keywords):
-                continue
-
-            # Chỉ nhận các cặp có tên đơn giản (tránh các loại index lạ)
-            # Crypto thường có tên từ 2 đến 7 ký tự (BTC, ETH, SOL, PEPE,...)
-            if not base.isalpha() or len(base) > 8:
+            if not base.isalpha() or len(base) > 12:
                 continue
 
             symbols.append(s["symbol"])
 
+    _valid_symbols_cache = symbols
+    _valid_symbols_ts = now
+
     return symbols
 
 
+# ─────────────────────────────────────────────
+# TOP SYMBOLS
+# ─────────────────────────────────────────────
 def get_top_symbols(limit=30):
 
+    url = f"{BINANCE_BASE}/fapi/v1/ticker/24hr"
+
     try:
-        tickers = requests.get(f"{BINANCE_BASE}/fapi/v1/ticker/24hr", timeout=10).json()
+        response = _session.get(url, timeout=10)
+        response.raise_for_status()
+        tickers = response.json()
     except Exception as e:
-        print(f"Error fetching tickers: {e}")
+        print(f"[TICKER ERROR] {e}")
         return []
-    
+
     valid = set(get_valid_symbols())
 
     usdt_pairs = [
@@ -81,17 +126,14 @@ def get_top_symbols(limit=30):
 
     return [x["symbol"] for x in usdt_pairs[:limit]]
 
-import requests
-import pandas as pd
-import time
-from app.core.config import BINANCE_BASE
 
-
+# ─────────────────────────────────────────────
+# KLINES
+# ─────────────────────────────────────────────
 def get_klines(symbol, limit=200, interval=None, start_time=None, end_time=None):
 
     from app.services.config_service import get_runtime_config
 
-    # ✅ Nếu không truyền interval → lấy từ runtime config
     if interval is None:
         runtime_cfg = get_runtime_config()
         interval = runtime_cfg["TIMEFRAME"]
@@ -102,7 +144,6 @@ def get_klines(symbol, limit=200, interval=None, start_time=None, end_time=None)
         "limit": limit
     }
 
-    # ✅ Optional: truyền start/end time (ms)
     if start_time:
         params["startTime"] = int(start_time.timestamp() * 1000)
 
@@ -111,10 +152,9 @@ def get_klines(symbol, limit=200, interval=None, start_time=None, end_time=None)
 
     url = f"{BINANCE_BASE}/fapi/v1/klines"
 
-    # ✅ Retry nhẹ để tránh timeout ngẫu nhiên
     for attempt in range(3):
         try:
-            response = requests.get(url, params=params, timeout=(5, 15))
+            response = _session.get(url, params=params, timeout=(5, 15))
             response.raise_for_status()
             data = response.json()
             break
@@ -125,9 +165,7 @@ def get_klines(symbol, limit=200, interval=None, start_time=None, end_time=None)
         print(f"[KLINES FAILED] {symbol}")
         return pd.DataFrame()
 
-    # ✅ Nếu Binance trả lỗi thay vì list
     if not isinstance(data, list):
-        print(f"[KLINES INVALID RESPONSE] {data}")
         return pd.DataFrame()
 
     df = pd.DataFrame(data, columns=[
@@ -145,16 +183,29 @@ def get_klines(symbol, limit=200, interval=None, start_time=None, end_time=None)
     df["volume"] = df["volume"].astype(float)
     df["time"] = pd.to_datetime(df["time"], unit="ms")
 
-    df = df.sort_values("time").reset_index(drop=True)
-    return df
+    return df.sort_values("time").reset_index(drop=True)
 
+
+# ─────────────────────────────────────────────
+# SERVER TIME
+# ─────────────────────────────────────────────
 def get_binance_server_time():
+
     url = f"{BINANCE_BASE}/fapi/v1/time"
-    r = requests.get(url, timeout=5).json()
-    
+
+    response = _session.get(url, timeout=5)
+    response.raise_for_status()
+
+    r = response.json()
+
     return pd.to_datetime(r["serverTime"], unit="ms")
 
+
+# ─────────────────────────────────────────────
+# CLOSED KLINES
+# ─────────────────────────────────────────────
 def get_candle_duration(interval: str):
+
     from datetime import timedelta
 
     mapping = {
@@ -166,7 +217,10 @@ def get_candle_duration(interval: str):
 
     return mapping[interval]
 
-def get_klines_closed(symbol, limit=300, interval=None, start_time=None, end_time=None,server_now=None):
+
+def get_klines_closed(symbol, limit=300, interval=None,
+                      start_time=None, end_time=None,
+                      server_now=None):
 
     df = get_klines(
         symbol=symbol,
@@ -181,35 +235,9 @@ def get_klines_closed(symbol, limit=300, interval=None, start_time=None, end_tim
 
     if server_now is None:
         server_now = get_binance_server_time()
-        
+
     duration = get_candle_duration(interval)
 
-    # ✅ chỉ giữ candle đã đóng
     df = df[df["time"] + duration <= server_now]
 
     return df
-
-def debug_candle_status(df, interval, symbol=""):
-
-    if df is None or df.empty:
-        print(f"[DEBUG] {symbol} DF EMPTY")
-        return
-
-    server_now = get_binance_server_time()
-    duration = get_candle_duration(interval)
-
-    last = df.iloc[-1]
-
-    open_time = last["time"]
-    close_time = open_time + duration
-
-    is_closed = close_time <= server_now
-
-    print("\n========== CANDLE DEBUG ==========")
-    print(f"Symbol: {symbol}")
-    print(f"Interval: {interval}")
-    print(f"Server time: {server_now}")
-    print(f"Last candle open:  {open_time}")
-    print(f"Last candle close: {close_time}")
-    print(f"Is closed: {is_closed}")
-    print("==================================\n")
