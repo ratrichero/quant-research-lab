@@ -259,12 +259,17 @@
 
   <div class="metric">
     <div class="metric-label">Max Losing Streak</div>
-    <div class="metric-value">{{ strategy_stats.max_consecutive_losses }}</div>
+    <div class="metric-value">
+      {{ max_losing_streak_exit }} / {{ max_losing_streak_candle }}
+    </div>
   </div>
+  
 
   <div class="metric">
-    <div class="metric-label">Max Win Streak</div>
-    <div class="metric-value">{{ strategy_stats.max_consecutive_wins }}</div>
+    <div class="metric-label">Max Win Streak (E/C)</div>
+    <div class="metric-value">
+      {{ max_winning_streak_exit }} / {{ max_winning_streak_candle }}
+    </div>
   </div>
 
 </div>
@@ -943,6 +948,14 @@
         data: {{ drawdown_portfolio | safe }},
         borderColor: 'rgb(255,82,82)',
         backgroundColor: 'rgba(255,82,82,0.08)',
+        fill: false,
+        tension: 0.3,
+        borderWidth: 2
+      },
+      {
+        label: 'Drawdown Fixed',
+        data: {{ drawdown_fixed | safe }},
+        borderColor: 'rgb(156,39,176)',
         fill: false,
         tension: 0.3,
         borderWidth: 2

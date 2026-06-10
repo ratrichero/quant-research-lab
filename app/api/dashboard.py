@@ -223,7 +223,11 @@ def dashboard(request: Request,page: int = 1,start_date: str = None,end_date: st
     if end_dt:
         query = query.filter(Signal.candle_time <= end_dt)
 
-    closed_trades = query.order_by(Signal.candle_time.asc()).all()
+    #closed_trades = query.order_by(Signal.candle_time.asc()).all()
+    closed_trades = query.order_by(Signal.exit_time.asc()).all()
+
+    closed_by_candle = sorted(closed_trades, key=lambda t: t.candle_time)
+    candle_stats = calculate_performance(closed_by_candle)
 
     open_trades = db.query(Signal).filter(
         Signal.status == "OPEN"
@@ -247,6 +251,8 @@ def dashboard(request: Request,page: int = 1,start_date: str = None,end_date: st
     db.close()
 
     INITIAL_CAPITAL = 10000
+    weekly_stats = {}
+    monthly_stats = {}
    
     # ===== DEFAULT RISK VALUES =====
     strategy_dd = 0
@@ -286,36 +292,55 @@ def dashboard(request: Request,page: int = 1,start_date: str = None,end_date: st
         portfolio_sharpe = 0
         risk_efficiency = 0
         no_data = True
+        
+        drawdown_strategy = [0]
+        drawdown_portfolio = [0]
+        drawdown_fixed = [0]
+
+        weekly_stats = strategy_stats
+        monthly_stats = strategy_stats
 
     else:
 
-        # ===== STRATEGY METRICS =====
-        strategy_stats = calculate_performance(closed_trades)
+        # =====================================================
+        # ✅ STRATEGY METRICS (Tactical Layer - Candle Order)
+        # =====================================================
+
+        closed_by_candle = sorted(closed_trades, key=lambda t: t.candle_time)
+
+        strategy_stats = calculate_performance(closed_by_candle)
         strategy_sharpe = strategy_stats.get("sharpe_ratio", 0)
 
-        # ===== WEEK / MONTH =====
+        # =====================================================
+        # ✅ WEEK / MONTH (Theo Exit Time - Capital Perspective)
+        # =====================================================
+
         cutoff_week = datetime.utcnow() - timedelta(days=7)
         cutoff_month = datetime.utcnow() - timedelta(days=30)
 
-        weekly_trades = [t for t in closed_trades if t.candle_time >= cutoff_week]
-        monthly_trades = [t for t in closed_trades if t.candle_time >= cutoff_month]
+        weekly_trades = [t for t in closed_trades if t.exit_time >= cutoff_week]
+        monthly_trades = [t for t in closed_trades if t.exit_time >= cutoff_month]
 
         weekly_stats = calculate_performance(weekly_trades) if weekly_trades else strategy_stats
         monthly_stats = calculate_performance(monthly_trades) if monthly_trades else strategy_stats
 
-        # ===== PORTFOLIO METRICS =====
-        PORTFOLIO_CONFIG = {
-            "initial_capital": INITIAL_CAPITAL,
-            "risk_per_trade": 0.01,
-            "max_portfolio_risk": 0.10
-        }
+        # =====================================================
+        # ✅ PORTFOLIO METRICS (Capital Layer - Exit Order)
+        # =====================================================
+
+        PORTFOLIO_CONFIG = {"initial_capital": INITIAL_CAPITAL}
 
         portfolio_equity, timestamps, portfolio_stats = run_portfolio_simulation(
             closed_trades,
             PORTFOLIO_CONFIG
         )
-        print("Fixed size:", fixed_size, type(fixed_size))
-        # ===== FIXED PORTFOLIO (100$ per trade) =====
+
+        portfolio_sharpe = portfolio_stats.get("sharpe_ratio", 0)
+
+        # =====================================================
+        # ✅ FIXED PORTFOLIO
+        # =====================================================
+
         FIXED_CONFIG = {
             "initial_capital": INITIAL_CAPITAL,
             "fixed_trade_size": fixed_size
@@ -326,28 +351,40 @@ def dashboard(request: Request,page: int = 1,start_date: str = None,end_date: st
             FIXED_CONFIG
         )
 
-        #portfolio_equity = portfolio_equity.tolist()
-        portfolio_sharpe = portfolio_stats.get("sharpe_ratio", 0)
+        fixed_peaks = np.maximum.accumulate(fixed_equity)
+        drawdown_fixed = (
+            (np.array(fixed_equity) - fixed_peaks) / fixed_peaks * 100
+        ).tolist()
 
-        # ===== STRATEGY EQUITY (NO SIZING) =====
-        returns = np.array([float(t.result_percent) / 100 for t in closed_trades])
+        # =====================================================
+        # ✅ STRATEGY EQUITY (Candle-Based)
+        # =====================================================
+
+        returns_candle = np.array([float(t.result_percent) / 100 for t in closed_by_candle])
 
         strategy_equity = [INITIAL_CAPITAL]
-        for r in returns:
+        for r in returns_candle:
             strategy_equity.append(strategy_equity[-1] * (1 + r))
 
-        strategy_equity = strategy_equity
+        # =====================================================
+        # ✅ LABELS (theo portfolio length để đồng bộ chart)
+        # =====================================================
 
-        # ===== Labels =====
-        labels = [str(i) for i in range(len(strategy_equity))]
+        labels = [str(i) for i in range(len(portfolio_equity))]
 
-        # ===== Drawdown Strategy =====
+        # =====================================================
+        # ✅ DRAWDOWN STRATEGY (Candle-based)
+        # =====================================================
+
         strategy_peaks = np.maximum.accumulate(strategy_equity)
         drawdown_strategy = (
             (np.array(strategy_equity) - strategy_peaks) / strategy_peaks * 100
         ).tolist()
 
-        # ===== Drawdown Portfolio =====
+        # =====================================================
+        # ✅ DRAWDOWN PORTFOLIO (Exit-based)
+        # =====================================================
+
         portfolio_peaks = np.maximum.accumulate(portfolio_equity)
         drawdown_portfolio = (
             (np.array(portfolio_equity) - portfolio_peaks) / portfolio_peaks * 100
@@ -356,9 +393,9 @@ def dashboard(request: Request,page: int = 1,start_date: str = None,end_date: st
         strategy_dd = round(min(drawdown_strategy), 2)
         portfolio_dd = round(min(drawdown_portfolio), 2)
 
-        # ═══════════════════════════════
-        # RISK MODEL DIAGNOSTIC
-        # ═══════════════════════════════
+        # =====================================================
+        # ✅ RISK MODEL DIAGNOSTIC
+        # =====================================================
 
         dd_delta = round(abs(strategy_dd) - abs(portfolio_dd), 2)
 
@@ -374,10 +411,9 @@ def dashboard(request: Request,page: int = 1,start_date: str = None,end_date: st
         else:
             risk_model_status = "NEUTRAL"
 
-
-        # ═══════════════════════════════
-        # GLOBAL RISK LEVEL
-        # ═══════════════════════════════
+        # =====================================================
+        # ✅ GLOBAL RISK LEVEL
+        # =====================================================
 
         if abs(portfolio_dd) >= 20 or portfolio_sharpe < 0:
             risk_level = "DANGER"
@@ -391,9 +427,15 @@ def dashboard(request: Request,page: int = 1,start_date: str = None,end_date: st
 
         else:
             risk_level = "SAFE"
-        
 
-        # ===== Risk Efficiency =====
+        # ✅ Streak riêng biệt, không reuse calculate_performance
+        mls_candle, mws_candle = compute_streak_by_candle(closed_trades)
+        mls_exit, mws_exit = compute_streak_by_exit(closed_trades)
+
+        # =====================================================
+        # ✅ RISK EFFICIENCY
+        # =====================================================
+
         strategy_return = strategy_stats.get("total_return_percent", 0)
         portfolio_return = portfolio_stats.get("total_return_percent", 0)
 
@@ -402,6 +444,8 @@ def dashboard(request: Request,page: int = 1,start_date: str = None,end_date: st
             risk_efficiency = round(portfolio_return / strategy_return, 3)
 
         no_data = False
+
+        
 
     # ===== Risk Guard =====
     MAX_DD_ALERT = 15
@@ -495,6 +539,11 @@ def dashboard(request: Request,page: int = 1,start_date: str = None,end_date: st
         fixed_equity=json.dumps(fixed_equity),
         fixed_size=fixed_size,
         fixed_stats=fixed_stats,
+        drawdown_fixed=json.dumps(drawdown_fixed),
+        max_losing_streak_candle=mls_candle,
+        max_winning_streak_candle=mws_candle,
+        max_losing_streak_exit=mls_exit,
+        max_winning_streak_exit=mws_exit,
     )
 
     return HTMLResponse(html)
@@ -541,3 +590,48 @@ def manual_close(signal_id: int):
         "symbol": symbol,
         "exit_price": exit_price
     }
+
+def compute_streak_by_candle(trades):
+    # Tactical layer: sort theo candle_time
+    sorted_trades = sorted(trades, key=lambda t: t.candle_time)
+
+    max_loss = max_win = 0
+    cur_loss = cur_win = 0
+
+    for t in sorted_trades:
+        r = float(t.result_percent)
+        if r < 0:
+            cur_loss += 1
+            cur_win = 0
+            max_loss = max(max_loss, cur_loss)
+        elif r > 0:
+            cur_win += 1
+            cur_loss = 0
+            max_win = max(max_win, cur_win)
+        else:
+            cur_loss = cur_win = 0
+
+    return max_loss, max_win
+
+
+def compute_streak_by_exit(trades):
+    # Capital layer: sort theo exit_time
+    sorted_trades = sorted(trades, key=lambda t: t.exit_time)
+
+    max_loss = max_win = 0
+    cur_loss = cur_win = 0
+
+    for t in sorted_trades:
+        r = float(t.result_percent)
+        if r < 0:
+            cur_loss += 1
+            cur_win = 0
+            max_loss = max(max_loss, cur_loss)
+        elif r > 0:
+            cur_win += 1
+            cur_loss = 0
+            max_win = max(max_win, cur_win)
+        else:
+            cur_loss = cur_win = 0
+
+    return max_loss, max_win

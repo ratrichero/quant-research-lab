@@ -7,26 +7,6 @@ import traceback
 import threading
 from asyncio import Queue
 from datetime import datetime, timezone, timedelta
-import logging
-import sys
-
-# ==============================
-# ✅ LOGGING CONFIG (ADD ONLY)
-# ==============================
-
-logging.basicConfig(
-    filename="app_runtime.log",
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
-logger = logging.getLogger(__name__)
-
-# Catch unexpected top-level crashes
-def handle_exception(exc_type, exc_value, exc_traceback):
-    logger.error("UNCAUGHT EXCEPTION",
-                 exc_info=(exc_type, exc_value, exc_traceback))
-
-sys.excepthook = handle_exception
 
 # ===== Import service chạy ngầm =====
 from app.services.signal_service import run_market_scan_single_tf
@@ -50,25 +30,13 @@ from app.services.config_service import get_runtime_config
 from app.bot.telegram_bot import run_bot
 from app.core.config import TELEGRAM_TOKEN
 
-#TELEGRAM_TOKEN1 ="1978783052:AAHfh4GsvGu_Po9YOgcHaKVTe_t9ICIOkik"
-TELEGRAM_TOKEN1 =TELEGRAM_TOKEN
-time_scheduler = 1
-time_monitor = 5
+TELEGRAM_TOKEN1 ="8833288986:AAGFhD-D2Kw6UtXJy4VZ1h9XmN2aYTCdwVE"
+#TELEGRAM_TOKEN1 =TELEGRAM_TOKEN
+time_scheduler = 1000
+time_monitor = 5000
 
 
 scan_queue = Queue()
-
-# ==============================
-# ✅ SAFE RUNNER WRAPPER (ADD ONLY)
-# ==============================
-async def safe_loop(loop_func, name: str):
-    while True:
-        try:
-            await loop_func()
-        except Exception:
-            logger.exception(f"[CRASH] Background loop crashed: {name}")
-            await asyncio.sleep(5)
-
 
 # ==============================
 # SCAN WORKER (Sequential Executor)
@@ -86,7 +54,6 @@ async def scan_worker():
             await asyncio.to_thread(run_market_scan_single_tf, timeframe)
             print(f"✅ [SCAN DONE] {timeframe}")
         except Exception as e:
-            logger.exception("[SCAN WORKER ERROR]")
             print(f"[SCAN WORKER ERROR] {e}")
         finally:
             scan_queue.task_done()
@@ -103,75 +70,94 @@ async def scheduler_loop():
     }
 
     while True:
-        try:
-            cfg = get_runtime_config()
 
-            if not cfg["ENABLE_SCHEDULER"]:
-                await asyncio.sleep(5)
-                continue
+        cfg = get_runtime_config()
 
-            now = datetime.now()
-
-            # ===== 15m =====
-            if now.minute in [1, 16, 31, 46]:
-                if last_executed["15m"] != now.minute:
-                    await scan_queue.put("15m")
-                    last_executed["15m"] = now.minute
-
-            # ===== 1h =====
-            if now.minute == 1:
-                if last_executed["1h"] != now.hour:
-                    await scan_queue.put("1h")
-                    last_executed["1h"] = now.hour
-
-            # ===== 4h =====
-            if now.minute == 1 and now.hour % 4 == 0:
-                if last_executed["4h"] != now.hour:
-                    await scan_queue.put("4h")
-                    last_executed["4h"] = now.hour
-
-            await asyncio.sleep(time_scheduler)
-
-        except Exception:
-            logger.exception("[SCHEDULER LOOP ERROR]")
+        if not cfg["ENABLE_SCHEDULER"]:
             await asyncio.sleep(5)
+            continue
 
+        now = datetime.now()
 
-"""
+        # ===== 15m =====
+        if now.minute in [1, 16, 31, 46]:
+            if last_executed["15m"] != now.minute:
+                await scan_queue.put("15m")
+                last_executed["15m"] = now.minute
+
+        # ===== 1h =====
+        if now.minute == 1:
+            if last_executed["1h"] != now.hour:
+                await scan_queue.put("1h")
+                last_executed["1h"] = now.hour
+
+        # ===== 4h =====
+        if now.minute == 1 and now.hour % 4 == 0:
+            if last_executed["4h"] != now.hour:
+                await scan_queue.put("4h")
+                last_executed["4h"] = now.hour
+
+        await asyncio.sleep(time_scheduler)
+
+""" 
 # ==============================
 # 1️⃣ Scheduler Market Scan
 # ==============================
 async def scheduler_loop():
-    ...
+    last_run_minute = None
+
+    while True:
+        
+        cfg = get_runtime_config()
+
+        # ✅ Nếu bị tắt thì ngủ 5s rồi check lại
+        if not cfg["ENABLE_SCHEDULER"]:
+            await asyncio.sleep(5)
+            continue
+
+        now = datetime.now()
+
+        if now.minute in [1, 5, 10, 16, 31, 46] and now.minute != last_run_minute:
+            #print(f"🚀 Scan market lúc {now.strftime('%H:%M:%S')}")
+            last_run_minute = now.minute
+
+            try:
+                await asyncio.to_thread(run_market_scan_multi_tf)
+            except Exception as e:
+                print(f"[SCAN ERROR] {e}")
+
+        await asyncio.sleep(time_scheduler)
+
 """
 # ==============================
 # 2️⃣ Monitor Trade mỗi 5s
 # ==============================
 async def monitor_loop():
     while True:
+        
+        cfg = get_runtime_config()
+
+        # ✅ Nếu monitor bị tắt
+        if not cfg["ENABLE_MONITOR"]:
+            await asyncio.sleep(5)
+            continue
+
+        start = datetime.now()
+
         try:
-            cfg = get_runtime_config()
-
-            # ✅ Nếu monitor bị tắt
-            if not cfg["ENABLE_MONITOR"]:
-                await asyncio.sleep(5)
-                continue
-
-            start = datetime.now()
-
             # ✅ 1. Process Pending (fill + expire)
             await asyncio.to_thread(process_pending_signals)
 
             # ✅ 2. Process Open Trades (SL/TP)
+            #print(f"[MONITOR At:] {start}")
             await asyncio.to_thread(monitor_open_trades)
 
-            elapsed = (datetime.now() - start).total_seconds()
-            sleep_time = max(0, time_monitor/1000 - elapsed)
-            await asyncio.sleep(sleep_time)
+        except Exception as e:
+            print(f"[MONITOR ERROR] {e}")
 
-        except Exception:
-            logger.exception("[MONITOR LOOP ERROR]")
-            await asyncio.sleep(5)
+        elapsed = (datetime.now() - start).total_seconds()
+        sleep_time = max(0, time_monitor - elapsed)
+        await asyncio.sleep(sleep_time)
 
 
 # ==============================
@@ -181,19 +167,14 @@ async def monitor_loop():
 async def lifespan(app: FastAPI):
 
     print("✅ Starting background tasks...")
-    logger.info("✅ Starting background tasks...")
 
-    # ✅ Wrap loops safely
-    scheduler_task = asyncio.create_task(safe_loop(scheduler_loop, "scheduler"))
-    worker_task = asyncio.create_task(safe_loop(scan_worker, "scan_worker"))
-    monitor_task = asyncio.create_task(safe_loop(monitor_loop, "monitor"))
+    scheduler_task = asyncio.create_task(scheduler_loop())
+    worker_task = asyncio.create_task(scan_worker())
+    monitor_task = asyncio.create_task(monitor_loop())
 
     # Telegram bot thread
     def start_bot():
-        try:
-            run_bot(TELEGRAM_TOKEN1)
-        except Exception:
-            logger.exception("[TELEGRAM BOT ERROR]")
+        run_bot(TELEGRAM_TOKEN1)
 
     bot_thread = threading.Thread(target=start_bot, daemon=True)
     bot_thread.start()
@@ -201,7 +182,6 @@ async def lifespan(app: FastAPI):
     yield
 
     print("🛑 Shutting down background tasks...")
-    logger.info("🛑 Shutting down background tasks...")
 
     scheduler_task.cancel()
     worker_task.cancel()
@@ -252,9 +232,6 @@ def root():
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     error_msg = f"{type(exc).__name__}: {str(exc)}"
-
-    logger.exception("UNHANDLED FASTAPI ERROR")
-
     print("\n" + "="*80)
     print("🚨 INTERNAL SERVER ERROR")
     print(error_msg)

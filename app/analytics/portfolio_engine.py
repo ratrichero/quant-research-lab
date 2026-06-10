@@ -1,176 +1,82 @@
 # app/analytics/portfolio_engine.py
 
-from datetime import datetime
 import numpy as np
 
 
-def calculate_position_size(nav, entry, sl, risk_per_trade):
-    sl_distance = abs(entry - sl)
-    if sl_distance <= 0:
-        return 0, 0,0
-
-    risk_amount = nav * risk_per_trade
-    position_size = risk_amount / sl_distance
-
-    capital_used = position_size * entry
-
-    return position_size, risk_amount, capital_used
-
+# ==========================================================
+# ✅ COMPOUND PORTFOLIO ENGINE (Capital-Level)
+# ==========================================================
 
 def run_portfolio_simulation(trades, config):
 
     initial_capital = config.get("initial_capital", 10000)
-    risk_per_trade = config.get("risk_per_trade", 0.01)
-    max_portfolio_risk = config.get("max_portfolio_risk", 0.10)
 
-    cash = initial_capital
+    # ✅ Chỉ lấy WIN / LOSS
+    closed_trades = [
+        t for t in trades
+        if t.status in ("WIN", "LOSS")
+        and t.result_percent is not None
+        and t.exit_time is not None
+    ]
+
+    # ✅ Sort theo exit_time
+    closed_trades.sort(key=lambda t: t.exit_time)
+
     nav = initial_capital
-
-    open_positions = []
-    equity_curve = []
+    equity_curve = [nav]
     timestamps = []
 
-    # ==== 1️⃣ Tạo event timeline ====
-    events = []
-    
-
-    for t in trades:
-        if not t.created_at:
-            continue
-
-        events.append(("OPEN", t.created_at, t))
-
-        if t.exit_time:
-            events.append(("CLOSE", t.exit_time, t))
-
-    events.sort(key=lambda x: x[1])
-
-    if not events:
-        return [initial_capital], [], {
-            "final_nav": initial_capital,
-            "total_return_percent": 0,
-            "sharpe_ratio": 0,
-            "sortino_ratio": 0,
-            "calmar_ratio": 0,
-            "max_drawdown_percent": 0,
-            "max_consecutive_losses": 0,
-            "total_trades": len(trades)
-        }
-
-    # ==== 2️⃣ Loop theo timeline ====
-    for event_type, ts, trade in events:
-
-        # ===== OPEN =====
-        if event_type == "OPEN":
-
-            position_size, risk_amount, capital_used = calculate_position_size(
-                nav,
-                float(trade.entry_price),
-                float(trade.stop_loss),
-                risk_per_trade
-            )
-
-            # Check portfolio risk
-            current_risk = sum(p["risk"] for p in open_positions)
-
-            if current_risk + risk_amount > nav * max_portfolio_risk:
-                continue
-
-            # Check đủ cash
-            if capital_used > cash:
-                continue
-
-            open_positions.append({
-                "id": trade.id,
-                "entry": float(trade.entry_price),
-                "direction": trade.direction,
-                "size": position_size,
-                "risk": risk_amount,
-                "capital_used": capital_used
-            })
-
-            cash -= capital_used
-
-        # ===== CLOSE =====
-        elif event_type == "CLOSE":
-
-            for pos in open_positions[:]:
-
-                if pos["id"] == trade.id:
-
-                    exit_price = float(trade.exit_price)
-
-                    pnl = pos["size"] * (
-                        exit_price - pos["entry"]
-                    )
-
-                    if pos["direction"] == "SHORT":
-                        pnl *= -1
-
-                    cash += pos["capital_used"] + pnl
-
-                    open_positions.remove(pos)
-                    break
-
-        # ==== Update NAV ====
-        #unrealized = 0  # (backtest offline nên bỏ qua MTM)
-        #nav = cash + unrealized
-
-        # ==== Update NAV (Corrected) ====
-
-        position_value = sum(p["capital_used"] for p in open_positions)
-        nav = cash + position_value
-
+    for t in closed_trades:
+        r = float(t.result_percent) / 100.0
+        nav *= (1 + r)
         equity_curve.append(nav)
-        timestamps.append(ts)
+        timestamps.append(t.exit_time)
 
-    # ==== 3️⃣ Performance Metrics (Event-Based Version - Corrected) ====
+    equity_array = np.array(equity_curve)
 
-    if len(equity_curve) > 1:
-        returns = np.diff(equity_curve) / equity_curve[:-1]
+    # ===== RETURNS =====
+    if len(equity_array) > 1:
+        returns = np.diff(equity_array) / equity_array[:-1]
     else:
-        returns = np.array([0])
+        returns = np.array([0.0])
 
     mean_return = np.mean(returns)
     std_return = np.std(returns)
 
-    # ✅ Sharpe (KHÔNG annualize vì event-based)
-    sharpe = 0
-    if std_return != 0:
+    # ✅ Sharpe fix
+    if std_return < 1e-12:
+        sharpe = 0
+    else:
         sharpe = mean_return / std_return
 
-    # ✅ Sortino (KHÔNG annualize)
+    # ✅ Sortino fix
     downside_returns = returns[returns < 0]
     downside_std = np.std(downside_returns) if len(downside_returns) > 0 else 0
 
-    sortino = 0
-    if downside_std != 0:
+    if downside_std < 1e-12:
+        sortino = 0
+    else:
         sortino = mean_return / downside_std
 
-    # ✅ Drawdown
-    equity_array = np.array(equity_curve)
-
+    # ===== DRAW DOWN =====
     peaks = np.maximum.accumulate(equity_array)
     drawdowns = (equity_array - peaks) / peaks
     max_dd = np.min(drawdowns) * 100
 
-    # ✅ Total Return
+    # ===== TOTAL RETURN =====
     total_return = (
-        (equity_curve[-1] / initial_capital - 1) * 100
-        if equity_curve else 0
+        (equity_array[-1] / initial_capital - 1) * 100
+        if len(equity_array) > 0 else 0
     )
 
-    # ✅ Calmar (dùng Total Return / Max DD)
-    calmar = 0
-    if max_dd != 0:
+    # ===== CALMAR =====
+    if abs(max_dd) < 1e-12:
+        calmar = 0
+    else:
         calmar = (total_return / 100) / abs(max_dd / 100)
 
-    # ✅ Max Consecutive Losing Trades (theo trade thật)
-    trade_results = []
-
-    for t in trades:
-        if hasattr(t, "result_percent") and t.result_percent is not None:
-            trade_results.append(float(t.result_percent))
+    # ===== MAX LOSING STREAK =====
+    trade_results = [float(t.result_percent) for t in closed_trades]
 
     max_losing_streak = 0
     current_streak = 0
@@ -183,17 +89,22 @@ def run_portfolio_simulation(trades, config):
             current_streak = 0
 
     stats = {
-        "final_nav": round(equity_curve[-1], 2) if equity_curve else initial_capital,
+        "final_nav": round(equity_array[-1], 2),
         "total_return_percent": round(total_return, 2),
         "sharpe_ratio": round(sharpe, 3),
         "sortino_ratio": round(sortino, 3),
         "calmar_ratio": round(calmar, 3),
         "max_drawdown_percent": round(max_dd, 2),
         "max_consecutive_losses": max_losing_streak,
-        "total_trades": len(trades)
-    }   
+        "total_trades": len(closed_trades)
+    }
 
     return equity_curve, timestamps, stats
+
+
+# ==========================================================
+# ✅ FIXED SIZE PORTFOLIO ENGINE
+# ==========================================================
 
 def run_fixed_portfolio_simulation(trades, config):
 
@@ -204,10 +115,11 @@ def run_fixed_portfolio_simulation(trades, config):
     equity_curve = [nav]
     timestamps = []
 
-    # Sắp xếp theo exit_time (vì chỉ quan tâm lệnh đã đóng)
     closed_trades = [
         t for t in trades
-        if hasattr(t, "result_percent") and t.result_percent is not None and t.exit_time
+        if t.status in ("WIN", "LOSS")
+        and t.result_percent is not None
+        and t.exit_time is not None
     ]
 
     closed_trades.sort(key=lambda t: t.exit_time)
@@ -220,36 +132,44 @@ def run_fixed_portfolio_simulation(trades, config):
         equity_curve.append(nav)
         timestamps.append(t.exit_time)
 
-    # ===== Metrics =====
+    equity_array = np.array(equity_curve)
 
-    if len(equity_curve) > 1:
-        returns = np.diff(equity_curve) / equity_curve[:-1]
+    # ===== RETURNS =====
+    if len(equity_array) > 1:
+        returns = np.diff(equity_array) / equity_array[:-1]
     else:
-        returns = np.array([0])
+        returns = np.array([0.0])
 
     mean_return = np.mean(returns)
     std_return = np.std(returns)
 
-    sharpe = mean_return / std_return if std_return != 0 else 0
+    # ✅ Sharpe fix
+    if std_return < 1e-12:
+        sharpe = 0
+    else:
+        sharpe = mean_return / std_return
 
-    equity_array = np.array(equity_curve)
+    # ===== DRAW DOWN =====
     peaks = np.maximum.accumulate(equity_array)
     drawdowns = (equity_array - peaks) / peaks
-    max_dd = np.min(drawdowns) * 100
+    max_dd = np.min(drawdowns)
 
     total_return = (
-        (equity_curve[-1] / initial_capital - 1) * 100
-        if equity_curve else 0
+        (equity_array[-1] / initial_capital - 1) * 100
+        if len(equity_array) > 0 else 0
     )
 
-    calmar = (total_return / 100) / abs(max_dd / 100) if max_dd != 0 else 0
+    if abs(max_dd) < 1e-12:
+        calmar = 0
+    else:
+        calmar = (total_return / 100) / abs(max_dd)
 
     stats = {
-        "final_nav": round(equity_curve[-1], 2),
+        "final_nav": round(equity_array[-1], 2),
         "total_return_percent": round(total_return, 2),
         "sharpe_ratio": round(sharpe, 3),
         "calmar_ratio": round(calmar, 3),
-        "max_drawdown_percent": round(max_dd, 2),
+        "max_drawdown_percent": round(max_dd * 100, 2),
         "total_trades": len(closed_trades),
         "fixed_trade_size": fixed_size
     }
