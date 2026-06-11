@@ -5,13 +5,25 @@ from app.db.models import Signal
 from app.analytics.performance_engine import calculate_performance
 from app.services.binance_service import get_klines
 from app.services.config_service import get_runtime_config
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta,timezone
 from jinja2 import Environment, FileSystemLoader
 import os, json
 from app.services.binance_service import get_all_prices
 from sqlalchemy import desc, asc
 from app.analytics.portfolio_engine import run_portfolio_simulation,run_fixed_portfolio_simulation
 import numpy as np
+
+VN_TZ = timezone(timedelta(hours=7))
+
+def vn_day_start_utc_naive(date_str: str):
+    # 00:00 ngày đó theo VN -> UTC naive
+    start_vn = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=VN_TZ)
+    return start_vn.astimezone(timezone.utc).replace(tzinfo=None)
+
+def vn_day_end_utc_naive(date_str: str):
+    # 00:00 ngày hôm sau theo VN -> UTC naive (end exclusive)
+    end_vn = datetime.strptime(date_str, "%Y-%m-%d").replace(tzinfo=VN_TZ) + timedelta(days=1)
+    return end_vn.astimezone(timezone.utc).replace(tzinfo=None)
 
 router = APIRouter()
 
@@ -217,11 +229,18 @@ def dashboard(request: Request,page: int = 1,start_date: str = None,end_date: st
     if selected_tf:
         query = query.filter(Signal.timeframe == selected_tf)
 
-    if start_dt:
-        query = query.filter(Signal.candle_time >= start_dt)
+    # Nếu có cả start và end mà user chọn ngược thì swap
+    if start_date and end_date and end_date < start_date:
+        start_date, end_date = end_date, start_date
 
-    if end_dt:
-        query = query.filter(Signal.candle_time <= end_dt)
+    if start_date:
+        start_utc = vn_day_start_utc_naive(start_date)
+        query = query.filter(Signal.created_at >= start_utc)
+
+    if end_date:
+        end_utc = vn_day_end_utc_naive(end_date)
+        query = query.filter(Signal.created_at < end_utc)   # end exclusive
+        
 
     #closed_trades = query.order_by(Signal.candle_time.asc()).all()
     closed_trades = query.order_by(Signal.exit_time.asc()).all()
@@ -635,3 +654,5 @@ def compute_streak_by_exit(trades):
             cur_loss = cur_win = 0
 
     return max_loss, max_win
+
+    

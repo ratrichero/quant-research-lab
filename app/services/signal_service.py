@@ -1001,10 +1001,10 @@ def scan_timeframe(db, timeframe, runtime_cfg):
         print("\n📊 SCORE DISTRIBUTION ANALYSIS:")
         print(f"Total Signals Evaluated: {len(valid_scores)}")
         print(f"Min: {min(valid_scores):.2f} | Max: {max(valid_scores):.2f} | Avg: {sum(valid_scores)/len(valid_scores):.2f}")
-        print("\n🎯 Gợi ý đặt SCORE_THRESHOLD trong DB:")
-        for p in [50, 70, 80, 90, 95]:
-            threshold_val = np.percentile(valid_scores, p)
-            print(f"- Nếu muốn lấy Top {100-p}% tín hiệu đẹp nhất -> Đặt SCORE_THRESHOLD = {threshold_val:.2f}")
+        #print("\n🎯 Gợi ý đặt SCORE_THRESHOLD trong DB:")
+        #for p in [50, 70, 80, 90, 95]:
+        #    threshold_val = np.percentile(valid_scores, p)
+        #    print(f"- Nếu muốn lấy Top {100-p}% tín hiệu đẹp nhất -> Đặt SCORE_THRESHOLD = {threshold_val:.2f}")
     else:
         print("\n⚠️ Không có signal nào được tính điểm.")
 
@@ -1012,10 +1012,10 @@ def scan_timeframe(db, timeframe, runtime_cfg):
     # RUNTIME CONFIG
     # ============================================================
 
-    print("\n===== RUNTIME FILTER CONFIG =====")
+    """print("\n===== RUNTIME FILTER CONFIG =====")
     for k, v in runtime_cfg.items():
         print(f"  {k}: {v}")
-    print("=================================\n")
+    print("=================================\n")"""
 
     # ============================================================
     # SCAN SUMMARY
@@ -1048,7 +1048,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
     print("=" * 45)
 
     # Warnings
-    if scan_stats["open_signal_blocked"] > 20:
+    """if scan_stats["open_signal_blocked"] > 20:
         print(f"\n⚠️  WARNING: {scan_stats['open_signal_blocked']} symbols bị block vì open signal")
         print("   → Xem xét tăng tốc close lệnh cũ")
 
@@ -1058,7 +1058,7 @@ def scan_timeframe(db, timeframe, runtime_cfg):
 
     if scan_stats["pattern_detected"] > 0 and scan_stats["ml_blocked"] > scan_stats["pattern_detected"] * 0.5:
         print(f"\n⚠️  WARNING: ML block {scan_stats['ml_blocked']}/{scan_stats['pattern_detected']} patterns")
-        print("   → Model filter quá aggressive, kiểm tra AI_THRESHOLD")
+        print("   → Model filter quá aggressive, kiểm tra AI_THRESHOLD")"""
 
    
     return scan_stats
